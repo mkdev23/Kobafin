@@ -41,9 +41,6 @@ export default function LoginPage() {
       </div>
 
       <div className="form">
-        <div className="label">Phone number *</div>
-        <input className="input" placeholder="+ 232 00 000 000" />
-
         {privyEnabled ? (
           <PrivyAuthButton
             onSuccess={() => router.push("/home")}

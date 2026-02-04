@@ -41,9 +41,6 @@ export default function SignupPage() {
       </div>
 
       <div className="form">
-        <div className="label">Phone number *</div>
-        <input className="input" placeholder="+ 232 00 000 000" />
-
         {privyEnabled ? (
           <PrivyAuthButton
             onSuccess={() => router.push("/onboarding/form")}
@@ -56,10 +53,6 @@ export default function SignupPage() {
         <button type="button" onClick={handleSIWS} disabled={busy} className="btn btn--primary btn--full">
           {wallet.connected ? (busy ? "Signing up..." : "Sign up") : "Connect wallet"}
         </button>
-
-        <Link href="/onboarding/verify" className="btn btn--ghost btn--full">
-          Continue with demo OTP flow
-        </Link>
 
         {err ? <div className="smalllinks" style={{ color: "#dc2626" }}>{err}</div> : null}
 

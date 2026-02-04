@@ -1,11 +1,11 @@
-import Link from "next/link";
+"use client";
 
-export default function DepositCompletePage({
-  searchParams,
-}: {
-  searchParams: { potId?: string };
-}) {
-  const potId = searchParams.potId || "";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+
+export default function DepositCompletePage() {
+  const searchParams = useSearchParams();
+  const potId = searchParams?.get("potId") || "";
   const href = potId ? `/pots/${encodeURIComponent(potId)}` : "/home";
   return (
     <div className="page">
@@ -40,3 +40,4 @@ export default function DepositCompletePage({
     </div>
   );
 }
+

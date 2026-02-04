@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+dist/
+build/
+.next/
+target/
+anchor/kobafin_escrow/target/
+anchor/kobafin_escrow/.anchor/

@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  walletAddress String?  @unique
+  createdAt     DateTime @default(now())
+  recoveryMode  Boolean  @default(false)
+  recoveryLockedUntil DateTime?
+  recoveryUpdatedAt DateTime?
+  pots          Pot[]
+  deposits      Deposit[]
+  luloPositions LuloPosition[]
+  luloOps       LuloOp[]
+  challenges    AuthChallenge[]
+}
+
+model AuthChallenge {
+  id            String   @id @default(cuid())
+  walletAddress String
+  nonce         String   @unique
+  message       String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  user User? @relation(fields: [walletAddress], references: [walletAddress])
+  @@index([walletAddress])
+}
+
+model Pot {
+  id           String         @id @default(cuid())
+  userId       String
+  name         String
+  strategyId   String
+  strategyKey  String?
+  riskTier     String?
+  goalUsd      Float?
+  isLocked     Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  user         User           @relation(fields: [userId], references: [id])
+  luloPosition LuloPosition?
+  luloOps      LuloOp[]
+}
+
+model Deposit {
+  id        String   @id @default(cuid())
+  userId    String
+  potId     String
+  netUsdc   Float
+  amountLamports String?
+  status    String
+  txSig     String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model LuloPosition {
+  id              String   @id @default(cuid())
+  potId           String   @unique
+  userId          String
+  strategyKey     String
+  riskTier        String
+  status          String
+  vaultPda        String
+  luloProgramId   String?
+  luloPositionId  String?
+  luloVaultId     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  pot  Pot  @relation(fields: [potId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model LuloOp {
+  id            String   @id @default(cuid())
+  potId         String
+  userId        String
+  depositId     String?
+  withdrawalId  String?
+  type          String
+  amountLamports String
+  status        String
+  txSig         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  pot  Pot  @relation(fields: [potId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([potId])
+  @@index([userId])
+}

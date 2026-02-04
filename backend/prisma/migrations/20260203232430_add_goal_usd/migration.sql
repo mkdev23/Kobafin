@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Pot" ADD COLUMN     "goalUsd" DOUBLE PRECISION;

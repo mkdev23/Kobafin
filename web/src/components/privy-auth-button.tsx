@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import bs58 from "bs58";
-import { useLogin, useSignMessage } from "@privy-io/react-auth";
+import { useLogin } from "@privy-io/react-auth";
 import { useSolanaWallets } from "@privy-io/react-auth/solana";
 
 type LoginWithSiws = (opts?: {
@@ -24,8 +24,7 @@ export function PrivyAuthButton({
   failureMessage?: string;
   ctaLabel?: string;
 }) {
-  const { wallets, createWallet } = useSolanaWallets();
-  const { signMessage: privySignMessage } = useSignMessage();
+  const { wallets, createWallet, ready } = useSolanaWallets();
   const [busy, setBusy] = useState(false);
 
   function isBase58Address(addr: string) {
@@ -49,21 +48,14 @@ export function PrivyAuthButton({
     return "";
   }
 
-  function decodePrivySignature(sig: string): Uint8Array {
-    if (/[+/=]/.test(sig)) {
-      const bin = atob(sig);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-      return bytes;
+  async function waitForSolanaWallet(timeoutMs = 15000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const solWallet = wallets.find((w: any) => w?.type === "solana");
+      if (solWallet) return solWallet;
+      await new Promise((r) => setTimeout(r, 200));
     }
-    try {
-      return bs58.decode(sig);
-    } catch {
-      const bin = atob(sig);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-      return bytes;
-    }
+    return null;
   }
 
   const { login } = useLogin({
@@ -81,9 +73,10 @@ export function PrivyAuthButton({
         await loginWithSIWS({
           walletAddress,
           signMessage: async (message) => {
-            const msg = new TextDecoder().decode(message);
-            const signature = await privySignMessage(msg, undefined, walletAddress);
-            return decodePrivySignature(signature);
+            const solWallet = (wallets.find((w: any) => w?.type === "solana") ||
+              (ready ? await waitForSolanaWallet() : null)) as any;
+            if (!solWallet?.signMessage) throw new Error("privy_sign_message_missing");
+            return solWallet.signMessage(message);
           },
           chain: "solana:devnet",
         });

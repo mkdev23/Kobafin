@@ -1,20 +1,17 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
-export default function CardDepositPage({
-  searchParams,
-}: {
-  searchParams: { amount?: string; potId?: string };
-}) {
+export default function CardDepositPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { token, isReady } = useAuth();
-  const amount = Number(searchParams.amount || 100);
-  const potId = searchParams.potId || "";
+  const amount = Number(searchParams?.get("amount") || 100);
+  const potId = searchParams?.get("potId") || "";
   const minUsd = 5;
 
   const [busy, setBusy] = useState(false);

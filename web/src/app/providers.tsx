@@ -2,6 +2,7 @@
 
 import React, { useMemo } from "react";
 import { PrivyProvider } from "@privy-io/react-auth";
+import type { PrivyClientConfig } from "@privy-io/react-auth";
 import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
@@ -16,10 +17,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const endpoint = useMemo(() => clusterApiUrl("devnet"), []);
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID || "";
-  const privyConfig = useMemo(
+  const privyConfig = useMemo<PrivyClientConfig>(
     () => ({
       appearance: { walletChainType: "solana-only" as const },
-      loginMethods: ["sms", "email", "google", "apple", "wallet"],
+      loginMethods: ["sms", "email", "google", "apple", "wallet"] as const,
       embeddedWallets: { solana: { createOnLogin: "users-without-wallets" as const } },
       externalWallets: { solana: { connectors: toSolanaWalletConnectors() } },
     }),

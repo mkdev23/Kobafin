@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useLogin } from "@privy-io/react-auth";
-import { useSolanaWallets } from "@privy-io/react-auth/solana";
+import { useCreateWallet, useLogin, useWallets } from "@privy-io/react-auth";
 
 type LoginWithSiws = (opts?: {
   walletAddress?: string;
@@ -23,20 +22,24 @@ export function PrivyAuthButton({
   failureMessage?: string;
   ctaLabel?: string;
 }) {
-  const { wallets, ready, createWallet } = useSolanaWallets();
+  const { wallets } = useWallets();
+  const { createWallet } = useCreateWallet();
   const [busy, setBusy] = useState(false);
   const walletsRef = useRef(wallets);
-  const readyRef = useRef(ready);
 
   useEffect(() => {
     walletsRef.current = wallets;
-    readyRef.current = ready;
-  }, [wallets, ready]);
+  }, [wallets]);
 
-  async function waitForWallet(timeoutMs = 5000) {
+  function getSolanaWallet() {
+    return walletsRef.current.find((wallet: any) => wallet?.type === "solana") || null;
+  }
+
+  async function waitForWallet(timeoutMs = 20000) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-      if (readyRef.current && walletsRef.current.length > 0) return walletsRef.current[0];
+      const solWallet = getSolanaWallet();
+      if (solWallet) return solWallet;
       await new Promise((r) => setTimeout(r, 200));
     }
     return null;

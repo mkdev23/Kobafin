@@ -48,6 +48,7 @@ export type DepositStatus =
   | "MOCK_SETTLED"
   | "SOL_CONFIRMED"
   | "WITHDRAW_CONFIRMED"
+  | "FEE_CONFIRMED"
   | `SOL_PENDING:${number}`
   | `WITHDRAW_PENDING:${number}`
   | "USDC_CONFIRMED"

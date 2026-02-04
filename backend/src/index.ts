@@ -805,7 +805,7 @@ await prisma.user.upsert({
         where: {
           potId,
           userId: req.user.sub,
-          status: { in: ["MOCK_SETTLED", "SOL_CONFIRMED", "WITHDRAW_CONFIRMED", "ALLOC_CONFIRMED"] },
+          status: { in: ["MOCK_SETTLED", "SOL_CONFIRMED", "WITHDRAW_CONFIRMED", "ALLOC_CONFIRMED", "FEE_CONFIRMED"] },
         },
         orderBy: { createdAt: "desc" },
       });
@@ -2644,6 +2644,49 @@ await prisma.user.upsert({
       where: { id: wd.id },
       data: { status: 'WITHDRAW_CONFIRMED', txSig: body.signature },
     });
+
+    if (locked && adminWallet && adminPotId) {
+      const feeUsd = Math.abs(wd.netUsdc) * (LOCKED_WITHDRAW_FEE_BPS / 10_000);
+      if (feeUsd > 0) {
+        const adminWalletStr = adminWallet.toBase58();
+        const adminUser = await prisma.user.upsert({
+          where: { walletAddress: adminWalletStr },
+          update: {},
+          create: { walletAddress: adminWalletStr },
+        });
+        await prisma.pot.upsert({
+          where: { id: adminPotId },
+          update: {},
+          create: {
+            id: adminPotId,
+            userId: adminUser.id,
+            name: "Admin Vault",
+            strategyId: "low",
+          },
+        });
+
+        const existingFee = await prisma.deposit.findFirst({
+          where: {
+            potId: adminPotId,
+            userId: adminUser.id,
+            txSig: body.signature,
+            status: "FEE_CONFIRMED",
+          },
+        });
+        if (!existingFee) {
+          await prisma.deposit.create({
+            data: {
+              userId: adminUser.id,
+              potId: adminPotId,
+              netUsdc: feeUsd,
+              amountLamports: String(calcFeeLamports(expectedLamports)),
+              status: "FEE_CONFIRMED",
+              txSig: body.signature,
+            },
+          });
+        }
+      }
+    }
 
     return reply.send({ ok: true, status: 'WITHDRAW_CONFIRMED', signature: body.signature, usd: wd.netUsdc });
   });

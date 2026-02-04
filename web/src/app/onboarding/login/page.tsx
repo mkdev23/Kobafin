@@ -3,67 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { useLogin } from "@privy-io/react-auth";
-import { useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/auth-context";
-
-function PrivyLoginButton({
-  onSuccess,
-  onError,
-  loginWithSIWS,
-}: {
-  onSuccess: () => void;
-  onError: (msg: string) => void;
-  loginWithSIWS: (opts?: {
-    walletAddress?: string;
-    signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
-    chain?: string;
-  }) => Promise<void>;
-}) {
-  const { wallets } = useSolanaWallets();
-  const [busy, setBusy] = useState(false);
-
-  const { login } = useLogin({
-    onComplete: async () => {
-      setBusy(true);
-      try {
-        const solWallet = wallets[0];
-        if (!solWallet) throw new Error("privy_wallet_missing");
-        const walletAddress = (solWallet as any).address || String((solWallet as any).publicKey || "");
-        if (!walletAddress) throw new Error("privy_wallet_missing");
-        await loginWithSIWS({
-          walletAddress,
-          signMessage: async (message) => {
-            if (!solWallet.signMessage) throw new Error("privy_sign_message_missing");
-            return solWallet.signMessage(message);
-          },
-          chain: "solana:devnet",
-        });
-        onSuccess();
-      } catch (e: any) {
-        onError(e?.message || "Privy sign-in failed");
-      } finally {
-        setBusy(false);
-      }
-    },
-    onError: (e) => {
-      if (e) onError(String((e as any)?.message || e));
-    },
-  });
-
-  return (
-    <button
-      type="button"
-      onClick={() => login()}
-      disabled={busy}
-      className="btn btn--primary btn--full"
-    >
-      {busy ? "Opening Privy..." : "Continue with phone or social"}
-    </button>
-  );
-}
+import { PrivyAuthButton } from "@/components/privy-auth-button";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -102,10 +45,11 @@ export default function LoginPage() {
         <input className="input" placeholder="+ 232 00 000 000" />
 
         {privyEnabled ? (
-          <PrivyLoginButton
+          <PrivyAuthButton
             onSuccess={() => router.push("/home")}
             onError={(msg) => setErr(msg)}
             loginWithSIWS={loginWithSIWS}
+            failureMessage="Privy sign-in failed"
           />
         ) : null}
 

@@ -21,7 +21,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     () => ({
       appearance: { walletChainType: "solana-only" as const },
       loginMethods: ["sms", "email", "google", "apple", "wallet"] as const,
-      embeddedWallets: { solana: { createOnLogin: "users-without-wallets" as const } },
+      embeddedWallets: { createOnLogin: "users-without-wallets" as const },
       externalWallets: { solana: { connectors: toSolanaWalletConnectors() } },
     }),
     []

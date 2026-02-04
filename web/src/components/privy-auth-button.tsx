@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useLogin } from "@privy-io/react-auth";
-import { useSolanaWallets } from "@privy-io/react-auth/solana";
+import { useEffect, useRef, useState } from "react";
+import { useLogin, useWallets } from "@privy-io/react-auth";
 
 type LoginWithSiws = (opts?: {
   walletAddress?: string;
@@ -23,22 +22,42 @@ export function PrivyAuthButton({
   failureMessage?: string;
   ctaLabel?: string;
 }) {
-  const { wallets } = useSolanaWallets();
+  const { wallets, ready } = useWallets();
   const [busy, setBusy] = useState(false);
+  const walletsRef = useRef(wallets);
+  const readyRef = useRef(ready);
+
+  useEffect(() => {
+    walletsRef.current = wallets;
+    readyRef.current = ready;
+  }, [wallets, ready]);
+
+  async function waitForWallet(timeoutMs = 5000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      if (readyRef.current && walletsRef.current.length > 0) return walletsRef.current[0];
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return null;
+  }
 
   const { login } = useLogin({
     onComplete: async () => {
       setBusy(true);
       try {
-        const solWallet = wallets[0];
+        const solWallet = await waitForWallet();
         if (!solWallet) throw new Error("privy_wallet_missing");
-        const walletAddress = (solWallet as any).address || String((solWallet as any).publicKey || "");
+        const walletAddress =
+          (solWallet as any)?.address || String((solWallet as any)?.publicKey || "");
         if (!walletAddress) throw new Error("privy_wallet_missing");
+
         await loginWithSIWS({
           walletAddress,
           signMessage: async (message) => {
-            if (!solWallet.signMessage) throw new Error("privy_sign_message_missing");
-            return solWallet.signMessage(message);
+            if (!(solWallet as any)?.signMessage) {
+              throw new Error("privy_sign_message_missing");
+            }
+            return (solWallet as any).signMessage(message);
           },
           chain: "solana:devnet",
         });

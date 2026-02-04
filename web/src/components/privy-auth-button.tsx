@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import bs58 from "bs58";
-import { useCreateWallet, useLogin, useSignMessage } from "@privy-io/react-auth";
+import { useLogin, useSignMessage } from "@privy-io/react-auth";
+import { useSolanaWallets } from "@privy-io/react-auth/solana";
 
 type LoginWithSiws = (opts?: {
   walletAddress?: string;
@@ -23,9 +24,30 @@ export function PrivyAuthButton({
   failureMessage?: string;
   ctaLabel?: string;
 }) {
-  const { createWallet } = useCreateWallet();
+  const { wallets, createWallet } = useSolanaWallets();
   const { signMessage: privySignMessage } = useSignMessage();
   const [busy, setBusy] = useState(false);
+
+  function isBase58Address(addr: string) {
+    try {
+      bs58.decode(addr);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function pickSolanaAddress(user: any) {
+    const linkedSol = (user?.linkedAccounts || []).find(
+      (acct: any) => acct?.type === "wallet" && acct?.chainType === "solana"
+    );
+    const linkedAddr = linkedSol?.address;
+    if (linkedAddr && isBase58Address(linkedAddr)) return linkedAddr;
+    const wallet = wallets.find((w: any) => w?.type === "solana");
+    const walletAddr = wallet?.address;
+    if (walletAddr && isBase58Address(walletAddr)) return walletAddr;
+    return "";
+  }
 
   function decodePrivySignature(sig: string): Uint8Array {
     if (/[+/=]/.test(sig)) {
@@ -48,10 +70,11 @@ export function PrivyAuthButton({
     onComplete: async (user) => {
       setBusy(true);
       try {
-        let walletAddress = (user as any)?.wallet?.address;
+        let walletAddress = pickSolanaAddress(user);
         if (!walletAddress) {
           const created = await createWallet();
-          walletAddress = (created as any)?.address;
+          const createdAddr = (created as any)?.address;
+          walletAddress = createdAddr && isBase58Address(createdAddr) ? createdAddr : "";
         }
         if (!walletAddress) throw new Error("privy_wallet_missing");
 

@@ -24,7 +24,7 @@ export function PrivyAuthButton({
   failureMessage?: string;
   ctaLabel?: string;
 }) {
-  const { wallets, createWallet, ready } = useSolanaWallets();
+  const { wallets, createWallet } = useSolanaWallets();
   const [busy, setBusy] = useState(false);
 
   function isBase58Address(addr: string) {
@@ -75,7 +75,7 @@ export function PrivyAuthButton({
         const solWallet =
           (wallets.find(
             (w: any) => w?.type === "solana" && typeof w?.signMessage === "function"
-          ) as any) || (ready ? await waitForSolanaWallet() : null);
+          ) as any) || (await waitForSolanaWallet());
         if (!solWallet?.signMessage) {
           throw new Error("privy_sign_message_missing");
         }

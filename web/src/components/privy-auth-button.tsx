@@ -48,10 +48,12 @@ export function PrivyAuthButton({
     return "";
   }
 
-  async function waitForSolanaWallet(timeoutMs = 15000) {
+  async function waitForSolanaWallet(timeoutMs = 20000) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-      const solWallet = wallets.find((w: any) => w?.type === "solana");
+      const solWallet = wallets.find(
+        (w: any) => w?.type === "solana" && typeof w?.signMessage === "function"
+      );
       if (solWallet) return solWallet;
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -70,19 +72,28 @@ export function PrivyAuthButton({
         }
         if (!walletAddress) throw new Error("privy_wallet_missing");
 
+        const solWallet =
+          (wallets.find(
+            (w: any) => w?.type === "solana" && typeof w?.signMessage === "function"
+          ) as any) || (ready ? await waitForSolanaWallet() : null);
+        if (!solWallet?.signMessage) {
+          throw new Error("privy_sign_message_missing");
+        }
+
         await loginWithSIWS({
           walletAddress,
           signMessage: async (message) => {
-            const solWallet = (wallets.find((w: any) => w?.type === "solana") ||
-              (ready ? await waitForSolanaWallet() : null)) as any;
-            if (!solWallet?.signMessage) throw new Error("privy_sign_message_missing");
             return solWallet.signMessage(message);
           },
           chain: "solana:devnet",
         });
         onSuccess();
       } catch (e: any) {
-        onError(e?.message || failureMessage);
+        if (e?.message === "privy_sign_message_missing") {
+          onError("Privy wallet not ready. Please wait a moment and try again.");
+        } else {
+          onError(e?.message || failureMessage);
+        }
       } finally {
         setBusy(false);
       }

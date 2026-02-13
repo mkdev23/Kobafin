@@ -1,0 +1,37 @@
+# Chainlink CRE workflow configuration for KobaFin V1.5.
+# Trigger: scheduled governance run (bounded, auditable updates).
+
+workflow:
+  id: kobafin-v1_5-governance
+  entrypoint: ./cre/workflow.ts
+  handler: run
+
+triggers:
+  - type: cron
+    schedule: "*/15 * * * *" # every 15 minutes
+
+capabilities:
+  httpClient:
+    enabled: true
+    timeoutMs: 10000
+  solana:
+    enabled: true
+    cluster: devnet
+    commitment: confirmed
+
+env:
+  # Internal services
+  GOV_BACKEND_BASE_URL: "https://kobafin-backend.example.com"
+  AGENT_BASE_URL: "https://kobafin-agent.example.com"
+  SIGNER_BASE_URL: "https://kobafin-signer.example.com"
+  INTERNAL_API_KEY: "${secret:internal_api_key}"
+
+  # Chainlink Solana Data Feeds (canonical price source)
+  # Set these URLs using the official feed endpoints documented for your CRE environment.
+  CHAINLINK_SOLANA_BTC_USD_URL: "https://chainlink-feed.example.com/solana/btc-usd"
+  CHAINLINK_SOLANA_ETH_USD_URL: "https://chainlink-feed.example.com/solana/eth-usd"
+  CHAINLINK_SOLANA_SOL_USD_URL: "https://chainlink-feed.example.com/solana/sol-usd"
+
+  # Wrapped-asset divergence controls
+  WRAP_DIVERGENCE_CAUTION_PCT: "2"
+  WRAP_DIVERGENCE_RISK_OFF_PCT: "5"

@@ -1,0 +1,25 @@
+# Backward-compatible root config.
+# Canonical config lives at `cre/config.yaml`.
+
+workflow:
+  id: kobafin-v1_5-governance
+  entrypoint: ./cre/workflow.ts
+  handler: run
+
+triggers:
+  - type: cron
+    schedule: "*/15 * * * *"
+
+capabilities:
+  httpClient:
+    enabled: true
+  solana:
+    enabled: true
+
+env:
+  GOV_BACKEND_BASE_URL: "https://your-backend.example.com"
+  AGENT_BASE_URL: "https://your-agent.example.com"
+  SIGNER_BASE_URL: "https://your-signer.example.com"
+  CHAINLINK_SOLANA_BTC_USD_URL: "https://chainlink-feed.example.com/solana/btc-usd"
+  CHAINLINK_SOLANA_ETH_USD_URL: "https://chainlink-feed.example.com/solana/eth-usd"
+  CHAINLINK_SOLANA_SOL_USD_URL: "https://chainlink-feed.example.com/solana/sol-usd"

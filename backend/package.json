@@ -9,6 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:signer": "tsx signerService.ts",
     "dev:agent": "tsx ../agent/agentServer.ts",
+    "smoke:v15": "tsx scripts/smoke-v15.ts",
     "start": "node dist/index.js",
     "migrate": "prisma migrate dev",
     "studio": "prisma studio"

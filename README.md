@@ -57,6 +57,7 @@ SOLANA_KEYPAIR_PATH="/home/mukub/.config/solana/id.json"
 # SIGNER_SECRET_KEY_JSON="[1,2,3,...]"
 
 SIGNER_PORT="3010"
+SIGNER_ALLOW_OFFCHAIN_POLICY="true"
 ```
 
 Run prisma:
@@ -81,14 +82,14 @@ Terminal B (signer service):
 
 ```bash
 cd backend
-npx tsx signerService.ts
+npm run dev:signer
 ```
 
 Terminal C (agent service):
 
 ```bash
 cd backend
-npx tsx ../agent/agentServer.ts
+npm run dev:agent
 ```
 
 Terminal D (web app):
@@ -105,12 +106,25 @@ Set `web/.env.local`:
 NEXT_PUBLIC_API_BASE="http://localhost:3001"
 ```
 
+Terminal E (optional smoke test):
+
+```bash
+cd backend
+npm run smoke:v15
+```
+
 ## 3) Health Checks
 
 ```bash
 curl http://localhost:3001/health
 curl http://localhost:3010/health
 curl http://localhost:3020/health
+```
+
+Governance snapshot endpoint (used by CRE):
+
+```bash
+curl -H "x-internal-key: $INTERNAL_API_KEY" http://localhost:3001/v1/governance/pods
 ```
 
 ## 4) Test Policy Update
@@ -120,6 +134,8 @@ curl -X POST http://localhost:3010/update_policy \
   -H "Content-Type: application/json" \
   -d '{"pod_id":"low","target_allocations_bps":{"usdc":7000,"btc":1500,"eth":1000,"sol":500},"usdc_in_lulo_bps":7000,"risk_state":"NORMAL"}'
 ```
+
+If your currently deployed escrow program does not yet include `update_policy`, signer can run in safe fallback mode (`SIGNER_ALLOW_OFFCHAIN_POLICY=true`) and return `simulated: true`.
 
 ## 5) Anchor Program (Devnet)
 
@@ -143,7 +159,7 @@ After deploy, ensure program id is aligned in:
 If your CRE CLI requires initialization metadata in this repository:
 
 ```bash
-cd /mnt/c/users/mukub/projects/kobafin
+
 cre init
 ```
 

@@ -111,6 +111,56 @@ function resolveStrategyMeta(id: "low" | "med" | "high") {
   return STRATEGY_META[id] ?? STRATEGY_META.low;
 }
 
+type GovernancePodTier = "LOW" | "MEDIUM" | "HIGH";
+
+function normalizePodTierFromPot(pot: { strategyId?: string; riskTier?: string | null }): GovernancePodTier {
+  const risk = String(pot.riskTier || "").trim().toUpperCase();
+  if (risk === "LOW") return "LOW";
+  if (risk === "MED" || risk === "MEDIUM") return "MEDIUM";
+  if (risk === "HIGH") return "HIGH";
+
+  const strategyId = String(pot.strategyId || "").trim().toLowerCase();
+  if (strategyId === "low") return "LOW";
+  if (strategyId === "med" || strategyId === "medium") return "MEDIUM";
+  return "HIGH";
+}
+
+function governanceWeightsPctFromStrategy(strategyId: string) {
+  const strategy =
+    STRATEGIES.find((s) => s.id === (strategyId as "low" | "med" | "high")) || STRATEGIES[0];
+  return {
+    usdc: Math.round((strategy.allocations.USDC || 0) * 10000) / 100,
+    btc: Math.round((strategy.allocations.BTC || 0) * 10000) / 100,
+    eth: Math.round(((strategy.allocations as any).ETH || 0) * 10000) / 100,
+    sol: Math.round((strategy.allocations.SOL || 0) * 10000) / 100,
+  };
+}
+
+function governancePolicyForTier(tier: GovernancePodTier) {
+  if (tier === "LOW") {
+    return {
+      min_usdc_in_lulo_pct: 70,
+      max_btc_pct: 20,
+      max_eth_pct: 15,
+      max_sol_pct: 15,
+    };
+  }
+  if (tier === "MEDIUM") {
+    return {
+      min_usdc_in_lulo_pct: 50,
+      max_btc_pct: 30,
+      max_eth_pct: 25,
+      max_sol_pct: 25,
+    };
+  }
+  return {
+    min_usdc_in_lulo_pct: 30,
+    max_btc_pct: 40,
+    max_eth_pct: 30,
+    max_sol_pct: 40,
+  };
+}
+
 function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env var: ${name}`);
@@ -300,12 +350,65 @@ async function registerRoutes() {
   const wsolMint = process.env.WSOL_MINT ? new PublicKey(process.env.WSOL_MINT) : null;
   const jupiterApiBase = normalizeApiBase(process.env.JUPITER_API_BASE || "https://api.jup.ag");
   const jupiterApiKey = process.env.JUPITER_API_KEY || "";
+  const internalApiKey = process.env.INTERNAL_API_KEY || "";
+
+  function ensureInternalAccess(req: any, reply: any) {
+    if (!internalApiKey) return true;
+    const provided = String(req.headers["x-internal-key"] || "");
+    if (provided !== internalApiKey) {
+      reply.code(401).send({ error: "unauthorized_internal" });
+      return false;
+    }
+    return true;
+  }
 
   // ----- HEALTH -----
   app.get("/health", async () => ({ ok: true }));
 
   // ----- STRATEGIES -----
   app.get("/v1/strategies", async () => ({ strategies: STRATEGIES }));
+
+  // ----- GOVERNANCE POD SNAPSHOT (CRE input) -----
+  app.get("/v1/governance/pods", async (req: any, reply) => {
+    if (!ensureInternalAccess(req, reply)) return;
+
+    const [pots, solUsd, assets] = await Promise.all([
+      prisma.pot.findMany({
+        orderBy: { createdAt: "desc" },
+        select: { id: true, strategyId: true, riskTier: true },
+      }),
+      getSolUsdPriceCached(),
+      getAssetUsdPricesCached(["bitcoin", "ethereum"]),
+    ]);
+
+    const btcSpot =
+      assets.bitcoin && assets.bitcoin > 0
+        ? assets.bitcoin
+        : Number(process.env.BTC_USD_FALLBACK || 50000);
+    const ethSpot =
+      assets.ethereum && assets.ethereum > 0
+        ? assets.ethereum
+        : Number(process.env.ETH_USD_FALLBACK || 3000);
+
+    const pods = pots.map((pot) => {
+      const podTier = normalizePodTierFromPot(pot);
+      return {
+        pod_id: pot.id,
+        pod_tier: podTier,
+        current_weights_pct: governanceWeightsPctFromStrategy(pot.strategyId || "low"),
+        current_risk_state: "NORMAL" as const,
+        policy: governancePolicyForTier(podTier),
+        // DEX spot placeholders in USDC per asset (USDC ~= USD).
+        dex_spot_prices: {
+          btcb_usdc: btcSpot,
+          weth_usdc: ethSpot,
+          sol_usdc: solUsd,
+        },
+      };
+    });
+
+    return reply.send({ pods });
+  });
 
   // ----- LULO STATUS -----
   const luloNetwork =

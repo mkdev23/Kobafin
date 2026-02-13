@@ -193,6 +193,49 @@ pub mod kobafin_escrow {
 
         Ok(())
     }
+
+    pub fn update_policy(
+        ctx: Context<UpdatePolicy>,
+        pod_hash: [u8; 32],
+        risk_state: u8,
+        target_usdc_bps: u16,
+        target_btc_bps: u16,
+        target_eth_bps: u16,
+        target_sol_bps: u16,
+        usdc_in_lulo_bps: u16,
+    ) -> Result<()> {
+        require!(risk_state <= 2, EscrowError::InvalidRiskState);
+
+        let target_sum = (target_usdc_bps as u32)
+            + (target_btc_bps as u32)
+            + (target_eth_bps as u32)
+            + (target_sol_bps as u32);
+        require!(target_sum == 10_000, EscrowError::InvalidBps);
+        require!(
+            usdc_in_lulo_bps <= target_usdc_bps,
+            EscrowError::InvalidLuloAllocation
+        );
+
+        let policy = &mut ctx.accounts.pod_policy;
+        let authority = ctx.accounts.authority.key();
+        if policy.authority == Pubkey::default() {
+            policy.authority = authority;
+            policy.bump = ctx.bumps.pod_policy;
+        } else {
+            require_keys_eq!(policy.authority, authority, EscrowError::Unauthorized);
+        }
+
+        policy.pod_hash = pod_hash;
+        policy.risk_state = risk_state;
+        policy.target_usdc_bps = target_usdc_bps;
+        policy.target_btc_bps = target_btc_bps;
+        policy.target_eth_bps = target_eth_bps;
+        policy.target_sol_bps = target_sol_bps;
+        policy.usdc_in_lulo_bps = usdc_in_lulo_bps;
+        policy.updated_at = Clock::get()?.unix_timestamp;
+
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -358,6 +401,24 @@ pub struct LuloExecute<'info> {
     pub lulo_program: UncheckedAccount<'info>,
 }
 
+#[derive(Accounts)]
+#[instruction(pod_hash: [u8; 32])]
+pub struct UpdatePolicy<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        init_if_needed,
+        payer = authority,
+        space = PodPolicy::SPACE,
+        seeds = [b"pod_policy", pod_hash.as_ref()],
+        bump
+    )]
+    pub pod_policy: Account<'info, PodPolicy>,
+
+    pub system_program: Program<'info, System>,
+}
+
 #[account]
 pub struct Vault {
     pub owner: Pubkey,
@@ -369,6 +430,24 @@ pub struct Vault {
 
 impl Vault {
     pub const SPACE: usize = 8 + 32 + 32 + 1 + 32 + 32;
+}
+
+#[account]
+pub struct PodPolicy {
+    pub authority: Pubkey,
+    pub pod_hash: [u8; 32],
+    pub risk_state: u8,
+    pub target_usdc_bps: u16,
+    pub target_btc_bps: u16,
+    pub target_eth_bps: u16,
+    pub target_sol_bps: u16,
+    pub usdc_in_lulo_bps: u16,
+    pub bump: u8,
+    pub updated_at: i64,
+}
+
+impl PodPolicy {
+    pub const SPACE: usize = 8 + 32 + 32 + 1 + 2 + 2 + 2 + 2 + 2 + 1 + 8;
 }
 
 #[error_code]
@@ -389,4 +468,10 @@ pub enum EscrowError {
     BadVaultAccount,
     #[msg("Invalid program")]
     InvalidProgram,
+    #[msg("Invalid risk state")]
+    InvalidRiskState,
+    #[msg("Invalid target bps sum")]
+    InvalidBps,
+    #[msg("Invalid usdc_in_lulo bps")]
+    InvalidLuloAllocation,
 }

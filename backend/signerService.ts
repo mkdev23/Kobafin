@@ -23,6 +23,17 @@ type AllocationBps = {
   sol: number;
 };
 
+type ShadowPolicy = {
+  pod_id: string;
+  target_allocations_bps: AllocationBps;
+  usdc_in_lulo_bps: number;
+  risk_state: RiskState;
+  reason?: string;
+  updated_at: string;
+};
+
+const shadowPolicyStore = new Map<string, ShadowPolicy>();
+
 const bpsSchema = z.object({
   usdc: z.number().int().min(0).max(10_000),
   btc: z.number().int().min(0).max(10_000),
@@ -118,6 +129,11 @@ function decodeSigner(): Keypair {
   throw new Error("Missing signer key env (SIGNER_SECRET_KEY_B58 or SIGNER_SECRET_KEY_JSON or SOLANA_KEYPAIR_PATH).");
 }
 
+function isMissingInstructionError(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || "");
+  return msg.includes("InstructionFallbackNotFound") || msg.includes("custom program error: 0x65");
+}
+
 function derivePodConfigPda(programId: PublicKey, podId: string): PublicKey {
   const seedPrefix = process.env.POD_CONFIG_SEED_PREFIX || "pod_policy";
   const [pda] = PublicKey.findProgramAddressSync([Buffer.from(seedPrefix), podIdHash(podId)], programId);
@@ -191,11 +207,15 @@ async function main() {
   const connection = new Connection(requireEnv("SOLANA_RPC"), "confirmed");
   const signer = decodeSigner();
   const programId = new PublicKey(requireEnv("KOBA_ESCROW_PROGRAM_ID"));
+  const allowOffchainPolicyFallback = String(
+    process.env.SIGNER_ALLOW_OFFCHAIN_POLICY || "false"
+  ).toLowerCase() === "true";
 
   app.get("/health", async () => ({
     ok: true,
     signer: signer.publicKey.toBase58(),
     programId: programId.toBase58(),
+    allowOffchainPolicyFallback,
   }));
 
   app.post("/update_policy", async (req, reply) => {
@@ -224,26 +244,71 @@ async function main() {
       });
     }
 
-    const tx = await submitUpdateTx({
-      connection,
-      signer,
-      programId,
-      podId: body.pod_id,
-      targetBps,
-      usdcInLuloBps: body.usdc_in_lulo_bps,
-      riskState: body.risk_state,
-    });
+    try {
+      const tx = await submitUpdateTx({
+        connection,
+        signer,
+        programId,
+        podId: body.pod_id,
+        targetBps,
+        usdcInLuloBps: body.usdc_in_lulo_bps,
+        riskState: body.risk_state,
+      });
 
-    return reply.send({
-      ok: true,
-      pod_id: body.pod_id,
-      target_allocations_bps: targetBps,
-      usdc_in_lulo_bps: body.usdc_in_lulo_bps,
-      risk_state: body.risk_state,
-      signature: tx.signature,
-      confirmed: true,
-      pod_config_pda: tx.podConfigPda,
-    });
+      return reply.send({
+        ok: true,
+        pod_id: body.pod_id,
+        target_allocations_bps: targetBps,
+        usdc_in_lulo_bps: body.usdc_in_lulo_bps,
+        risk_state: body.risk_state,
+        signature: tx.signature,
+        confirmed: true,
+        simulated: false,
+        pod_config_pda: tx.podConfigPda,
+      });
+    } catch (err: any) {
+      if (allowOffchainPolicyFallback && isMissingInstructionError(err)) {
+        const snapshot: ShadowPolicy = {
+          pod_id: body.pod_id,
+          target_allocations_bps: targetBps,
+          usdc_in_lulo_bps: body.usdc_in_lulo_bps,
+          risk_state: body.risk_state,
+          reason: body.reason,
+          updated_at: new Date().toISOString(),
+        };
+        shadowPolicyStore.set(body.pod_id, snapshot);
+
+        req.log.warn(
+          { pod_id: body.pod_id },
+          "onchain update_policy instruction missing; stored policy offchain fallback"
+        );
+        return reply.send({
+          ok: true,
+          pod_id: body.pod_id,
+          target_allocations_bps: targetBps,
+          usdc_in_lulo_bps: body.usdc_in_lulo_bps,
+          risk_state: body.risk_state,
+          signature: null,
+          confirmed: false,
+          simulated: true,
+          warning: "update_policy_instruction_missing_onchain",
+          stored_at: snapshot.updated_at,
+        });
+      }
+
+      req.log.error({ err }, "update_policy_failed");
+      return reply.code(500).send({
+        error: "update_policy_failed",
+        message: err?.message || String(err),
+      });
+    }
+  });
+
+  app.get("/policy/:podId", async (req: any, reply) => {
+    const podId = String(req.params.podId || "");
+    const policy = shadowPolicyStore.get(podId);
+    if (!policy) return reply.code(404).send({ error: "policy_not_found" });
+    return reply.send({ ok: true, policy });
   });
 
   const port = Number(process.env.SIGNER_PORT || 3010);
@@ -256,4 +321,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

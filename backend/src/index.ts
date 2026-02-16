@@ -369,8 +369,17 @@ async function registerRoutes() {
     return !!adminPotId && potId === adminPotId;
   }
 
-  function rejectRestrictedAdminPot(potId: string, reply: any, action: "withdraw" | "delete") {
+  function rejectRestrictedAdminPot(
+    req: any,
+    potId: string,
+    reply: any,
+    action: "withdraw" | "delete"
+  ) {
     if (!isRestrictedAdminPot(potId)) return false;
+    // Treasury owner can manage treasury pot from authenticated admin session.
+    if (adminWallet && String(req?.user?.walletAddress || "") === adminWallet.toBase58()) {
+      return false;
+    }
     reply.code(403).send({
       error: "admin_pot_restricted",
       message:
@@ -832,7 +841,7 @@ await prisma.user.upsert({
     { preHandler: authGuard },
     async (req: any, reply) => {
       const potId = req.params.potId as string;
-      if (rejectRestrictedAdminPot(potId, reply, "delete")) return;
+      if (rejectRestrictedAdminPot(req, potId, reply, "delete")) return;
       const pot = await prisma.pot.findFirst({ where: { id: potId, userId: req.user.sub } });
       if (!pot) return reply.code(404).send({ error: "pot_not_found" });
 
@@ -1662,7 +1671,7 @@ await prisma.user.upsert({
     if (await enforceRecoveryLock(req.user.sub, reply)) return;
     if (!luloEnabled) return reply.code(400).send({ error: "lulo_not_configured" });
     if (!usdcMint) return reply.code(400).send({ error: "usdc_mint_missing" });
-    if (rejectRestrictedAdminPot(body.potId, reply, "withdraw")) return;
+    if (rejectRestrictedAdminPot(req, body.potId, reply, "withdraw")) return;
 
     const pot = await prisma.pot.findFirst({ where: { id: body.potId, userId: req.user.sub } });
     if (!pot) return reply.code(404).send({ error: "pot_not_found" });
@@ -1818,7 +1827,7 @@ await prisma.user.upsert({
 
     const op = await prisma.luloOp.findFirst({ where: { id: body.luloOpId, userId: req.user.sub } });
     if (!op) return reply.code(404).send({ error: "lulo_op_not_found" });
-    if (rejectRestrictedAdminPot(op.potId, reply, "withdraw")) return;
+    if (rejectRestrictedAdminPot(req, op.potId, reply, "withdraw")) return;
     if (op.status === "CONFIRMED") {
       if (op.txSig && op.txSig !== body.signature) {
         return reply.code(400).send({ error: "signature_mismatch" });
@@ -1877,7 +1886,7 @@ await prisma.user.upsert({
 
       const op = await prisma.luloOp.findFirst({ where: { id: body.luloOpId, userId: req.user.sub } });
       if (!op) return reply.code(404).send({ error: "lulo_op_not_found" });
-      if (rejectRestrictedAdminPot(op.potId, reply, "withdraw")) return;
+      if (rejectRestrictedAdminPot(req, op.potId, reply, "withdraw")) return;
 
       const pot = await prisma.pot.findFirst({ where: { id: op.potId, userId: req.user.sub } });
       if (!pot) return reply.code(404).send({ error: "pot_not_found" });
@@ -1998,7 +2007,7 @@ await prisma.user.upsert({
 
       const op = await prisma.luloOp.findFirst({ where: { id: body.luloOpId, userId: req.user.sub } });
       if (!op) return reply.code(404).send({ error: "lulo_op_not_found" });
-      if (rejectRestrictedAdminPot(op.potId, reply, "withdraw")) return;
+      if (rejectRestrictedAdminPot(req, op.potId, reply, "withdraw")) return;
       if (op.status === "CONFIRMED") {
         if (op.txSig && op.txSig !== body.signature) {
           return reply.code(400).send({ error: "signature_mismatch" });
@@ -2570,7 +2579,7 @@ await prisma.user.upsert({
   app.post('/v1/withdrawals/sol/prepare', { preHandler: authGuard }, async (req: any, reply) => {
     const body = z.object({ potId: z.string().min(1), usd: z.number().positive() }).parse(req.body);
     if (await enforceRecoveryLock(req.user.sub, reply)) return;
-    if (rejectRestrictedAdminPot(body.potId, reply, "withdraw")) return;
+    if (rejectRestrictedAdminPot(req, body.potId, reply, "withdraw")) return;
 
     const pot = await prisma.pot.findFirst({ where: { id: body.potId, userId: req.user.sub } });
     if (!pot) return reply.code(404).send({ error: 'pot_not_found' });
@@ -2708,7 +2717,7 @@ await prisma.user.upsert({
 
     const wd = await prisma.deposit.findFirst({ where: { id: body.withdrawalId, userId: req.user.sub } });
     if (!wd) return reply.code(404).send({ error: 'withdrawal_not_found' });
-    if (rejectRestrictedAdminPot(wd.potId, reply, "withdraw")) return;
+    if (rejectRestrictedAdminPot(req, wd.potId, reply, "withdraw")) return;
 
     const status = String(wd.status);
     if (status === 'WITHDRAW_CONFIRMED') {

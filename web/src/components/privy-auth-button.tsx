@@ -48,17 +48,6 @@ export function PrivyAuthButton({
     ) as any;
   }
 
-  function pickSolanaAddress(user: any) {
-    const linkedSol = (user?.linkedAccounts || []).find(
-      (acct: any) => acct?.type === "wallet" && acct?.chainType === "solana"
-    );
-    const linkedAddr = linkedSol?.address;
-    if (linkedAddr && isBase58Address(linkedAddr)) return linkedAddr;
-    const walletAddr = currentSolanaWallet()?.address;
-    if (walletAddr && isBase58Address(walletAddr)) return walletAddr;
-    return "";
-  }
-
   async function waitForSolanaWallet(timeoutMs = 30000) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
@@ -82,24 +71,39 @@ export function PrivyAuthButton({
     return message;
   }
 
+  function normalizeSignatureBytes(raw: any): Uint8Array {
+    if (raw instanceof Uint8Array) return raw;
+    if (Array.isArray(raw)) return Uint8Array.from(raw);
+    if (raw?.signature) return normalizeSignatureBytes(raw.signature);
+    if (typeof raw === "string") {
+      try {
+        return bs58.decode(raw);
+      } catch {
+        const clean = raw.startsWith("0x") ? raw.slice(2) : raw;
+        if (/^[0-9a-fA-F]+$/.test(clean) && clean.length % 2 === 0) {
+          return Uint8Array.from(Buffer.from(clean, "hex"));
+        }
+      }
+    }
+    throw new Error("privy_sign_message_invalid");
+  }
+
   const { login } = useLogin({
     onComplete: async (user) => {
       setBusy(true);
       try {
-        let walletAddress = pickSolanaAddress(user);
-        if (!walletAddress) {
-          const created = await createWallet();
-          const createdAddr = (created as any)?.address;
-          walletAddress = createdAddr && isBase58Address(createdAddr) ? createdAddr : "";
+        let solWallet = currentSolanaWallet();
+        if (!solWallet) {
+          await createWallet();
+          solWallet = await waitForSolanaWallet();
         }
-        if (!walletAddress) throw new Error("privy_wallet_missing");
-
-        const solWallet = currentSolanaWallet() || (await waitForSolanaWallet());
         if (!solWallet?.signMessage) throw new Error("privy_sign_message_missing");
+        const walletAddress = solWallet?.address;
+        if (!walletAddress || !isBase58Address(walletAddress)) throw new Error("privy_wallet_missing");
 
         await loginWithSIWS({
           walletAddress,
-          signMessage: async (message) => solWallet.signMessage(message),
+          signMessage: async (message) => normalizeSignatureBytes(await solWallet.signMessage(message)),
           chain: getSiwsChainFromEnv(),
         });
         onSuccess();
@@ -120,4 +124,3 @@ export function PrivyAuthButton({
     </button>
   );
 }
-

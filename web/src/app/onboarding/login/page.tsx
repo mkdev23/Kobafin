@@ -7,6 +7,7 @@ import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/auth-context";
 import { PrivyAuthButton } from "@/components/privy-auth-button";
+import { PhantomMobilePrompt } from "@/components/phantom-mobile-prompt";
 
 function toAuthErrorMessage(err: unknown, fallback: string) {
   const msg = String((err as any)?.message || err || "").trim();
@@ -27,6 +28,17 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [pendingConnectAndSignIn, setPendingConnectAndSignIn] = useState(false);
   const privyEnabled = !!process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+
+  // Debug: Log wallet state
+  useEffect(() => {
+    console.log("[Login] Wallet state:", {
+      connected: wallet.connected,
+      connecting: wallet.connecting,
+      publicKey: wallet.publicKey?.toBase58(),
+      walletName: wallet.wallet?.adapter?.name,
+      allWallets: wallet.wallets?.map(w => w.adapter.name),
+    });
+  }, [wallet.connected, wallet.connecting, wallet.publicKey, wallet.wallet, wallet.wallets]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -52,8 +64,11 @@ export default function LoginPage() {
 
   async function handleSIWS() {
     setErr(null);
+    console.log("[Login] handleSIWS called, wallet.connected:", wallet.connected);
+    console.log("[Login] Phantom in window?", typeof (window as any).solana !== "undefined");
     if (!wallet.connected) {
       setPendingConnectAndSignIn(true);
+      console.log("[Login] Opening wallet modal...");
       setVisible(true);
       return;
     }
@@ -95,6 +110,8 @@ export default function LoginPage() {
               ? "Connecting wallet..."
               : "Connect & sign with wallet"}
         </button>
+
+        <PhantomMobilePrompt />
 
         {err ? <div className="smalllinks" style={{ color: "#dc2626" }}>{err}</div> : null}
 

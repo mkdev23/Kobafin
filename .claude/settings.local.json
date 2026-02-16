@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "Bash(netstat:*)",
+      "Read(//c/Users/mukub/projects/kobafin/**)",
+      "Bash(powershell -Command \"Stop-Process -Id 19392 -Force\")",
+      "Bash(powershell -Command:*)"
+    ]
+  }
+}

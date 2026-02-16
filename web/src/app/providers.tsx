@@ -16,15 +16,18 @@ import { AuthProvider } from "@/lib/auth-context";
 export function Providers({ children }: { children: React.ReactNode }) {
   const endpoint = useMemo(() => clusterApiUrl(getSolanaClusterFromEnv()), []);
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID || "";
-  const wallets = useMemo(
-    () => (privyAppId ? [] : [new PhantomWalletAdapter()]),
-    [privyAppId]
-  );
+  // Always include Phantom wallet adapter, even when Privy is enabled
+  // This allows users to choose between Privy embedded wallets OR Phantom wallet
+  const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
   const privyConfig = useMemo<PrivyClientConfig>(
     () => ({
-      appearance: { walletChainType: "solana-only" as const },
-      loginMethods: ["sms", "email", "google", "apple"] as const,
-      embeddedWallets: { createOnLogin: "users-without-wallets" as const },
+      appearance: {
+        walletChainType: "solana-only" as const,
+      },
+      loginMethods: ["sms", "email", "google", "apple", "wallet"] as const,
+      embeddedWallets: {
+        createOnLogin: "users-without-wallets" as const,
+      },
     }),
     []
   );

@@ -7,6 +7,7 @@ import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/auth-context";
 import { PrivyAuthButton } from "@/components/privy-auth-button";
+import { PhantomMobilePrompt } from "@/components/phantom-mobile-prompt";
 
 function toAuthErrorMessage(err: unknown, fallback: string) {
   const msg = String((err as any)?.message || err || "").trim();
@@ -95,6 +96,8 @@ export default function SignupPage() {
               ? "Connecting wallet..."
               : "Connect & sign with wallet"}
         </button>
+
+        <PhantomMobilePrompt />
 
         {err ? <div className="smalllinks" style={{ color: "#dc2626" }}>{err}</div> : null}
 

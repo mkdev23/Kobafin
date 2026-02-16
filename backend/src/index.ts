@@ -351,6 +351,8 @@ async function registerRoutes() {
   const jupiterApiBase = normalizeApiBase(process.env.JUPITER_API_BASE || "https://api.jup.ag");
   const jupiterApiKey = process.env.JUPITER_API_KEY || "";
   const internalApiKey = process.env.INTERNAL_API_KEY || "";
+  const allowAdminPotWithdrawals =
+    String(process.env.ALLOW_ADMIN_POT_WITHDRAWALS || "false").toLowerCase() === "true";
 
   function ensureInternalAccess(req: any, reply: any) {
     if (!internalApiKey) return true;
@@ -359,6 +361,23 @@ async function registerRoutes() {
       reply.code(401).send({ error: "unauthorized_internal" });
       return false;
     }
+    return true;
+  }
+
+  function isRestrictedAdminPot(potId: string) {
+    if (allowAdminPotWithdrawals) return false;
+    return !!adminPotId && potId === adminPotId;
+  }
+
+  function rejectRestrictedAdminPot(potId: string, reply: any, action: "withdraw" | "delete") {
+    if (!isRestrictedAdminPot(potId)) return false;
+    reply.code(403).send({
+      error: "admin_pot_restricted",
+      message:
+        action === "withdraw"
+          ? "Admin pot is treasury-managed and cannot be withdrawn from user flows."
+          : "Admin pot is treasury-managed and cannot be deleted from user flows.",
+    });
     return true;
   }
 
@@ -371,6 +390,10 @@ async function registerRoutes() {
   // ----- GOVERNANCE POD SNAPSHOT (CRE input) -----
   app.get("/v1/governance/pods", async (req: any, reply) => {
     if (!ensureInternalAccess(req, reply)) return;
+    const creRunId = String(req.headers["x-cre-run-id"] || "");
+    if (creRunId) {
+      app.log.info({ creRunId }, "governance_pods_requested");
+    }
 
     const [pots, solUsd, assets] = await Promise.all([
       prisma.pot.findMany({
@@ -407,6 +430,9 @@ async function registerRoutes() {
       };
     });
 
+    if (creRunId) {
+      app.log.info({ creRunId, podCount: pods.length }, "governance_pods_response");
+    }
     return reply.send({ pods });
   });
 
@@ -806,6 +832,7 @@ await prisma.user.upsert({
     { preHandler: authGuard },
     async (req: any, reply) => {
       const potId = req.params.potId as string;
+      if (rejectRestrictedAdminPot(potId, reply, "delete")) return;
       const pot = await prisma.pot.findFirst({ where: { id: potId, userId: req.user.sub } });
       if (!pot) return reply.code(404).send({ error: "pot_not_found" });
 
@@ -1635,6 +1662,7 @@ await prisma.user.upsert({
     if (await enforceRecoveryLock(req.user.sub, reply)) return;
     if (!luloEnabled) return reply.code(400).send({ error: "lulo_not_configured" });
     if (!usdcMint) return reply.code(400).send({ error: "usdc_mint_missing" });
+    if (rejectRestrictedAdminPot(body.potId, reply, "withdraw")) return;
 
     const pot = await prisma.pot.findFirst({ where: { id: body.potId, userId: req.user.sub } });
     if (!pot) return reply.code(404).send({ error: "pot_not_found" });
@@ -1790,6 +1818,7 @@ await prisma.user.upsert({
 
     const op = await prisma.luloOp.findFirst({ where: { id: body.luloOpId, userId: req.user.sub } });
     if (!op) return reply.code(404).send({ error: "lulo_op_not_found" });
+    if (rejectRestrictedAdminPot(op.potId, reply, "withdraw")) return;
     if (op.status === "CONFIRMED") {
       if (op.txSig && op.txSig !== body.signature) {
         return reply.code(400).send({ error: "signature_mismatch" });
@@ -1848,6 +1877,7 @@ await prisma.user.upsert({
 
       const op = await prisma.luloOp.findFirst({ where: { id: body.luloOpId, userId: req.user.sub } });
       if (!op) return reply.code(404).send({ error: "lulo_op_not_found" });
+      if (rejectRestrictedAdminPot(op.potId, reply, "withdraw")) return;
 
       const pot = await prisma.pot.findFirst({ where: { id: op.potId, userId: req.user.sub } });
       if (!pot) return reply.code(404).send({ error: "pot_not_found" });
@@ -1968,6 +1998,7 @@ await prisma.user.upsert({
 
       const op = await prisma.luloOp.findFirst({ where: { id: body.luloOpId, userId: req.user.sub } });
       if (!op) return reply.code(404).send({ error: "lulo_op_not_found" });
+      if (rejectRestrictedAdminPot(op.potId, reply, "withdraw")) return;
       if (op.status === "CONFIRMED") {
         if (op.txSig && op.txSig !== body.signature) {
           return reply.code(400).send({ error: "signature_mismatch" });
@@ -2281,6 +2312,7 @@ await prisma.user.upsert({
 
     if (params.type === "withdraw" && params.feeLamports && params.feeLamports > 0) {
       if (!params.adminVault) throw new Error("admin_vault_missing");
+      if (params.adminVault.equals(pda)) throw new Error("admin_vault_conflict");
       ixName = "withdraw_with_fee";
       data = Buffer.concat([
         anchorDiscriminator(ixName),
@@ -2538,6 +2570,7 @@ await prisma.user.upsert({
   app.post('/v1/withdrawals/sol/prepare', { preHandler: authGuard }, async (req: any, reply) => {
     const body = z.object({ potId: z.string().min(1), usd: z.number().positive() }).parse(req.body);
     if (await enforceRecoveryLock(req.user.sub, reply)) return;
+    if (rejectRestrictedAdminPot(body.potId, reply, "withdraw")) return;
 
     const pot = await prisma.pot.findFirst({ where: { id: body.potId, userId: req.user.sub } });
     if (!pot) return reply.code(404).send({ error: 'pot_not_found' });
@@ -2567,9 +2600,9 @@ await prisma.user.upsert({
     // Extra safety: ensure the per-pot PDA vault exists and actually has enough
     // lamports on-chain. If not, Phantom often bubbles up an "Unexpected error"
     // with little context.
+    const { pda } = deriveVaultPdaFromPotId(owner, body.potId, escrowProgramId);
     let info;
     try {
-      const { pda } = deriveVaultPdaFromPotId(owner, body.potId, escrowProgramId);
       info = await connection.getAccountInfo(pda, { commitment: 'confirmed' });
     } catch (_) {
       return reply.code(503).send({ error: 'rpc_unavailable' });
@@ -2593,6 +2626,13 @@ await prisma.user.upsert({
         adminVault = getAdminVaultPda();
       } catch (err: any) {
         return reply.code(400).send({ error: err?.message || "admin_vault_missing" });
+      }
+      if (adminVault.equals(pda)) {
+        return reply.code(400).send({
+          error: "admin_vault_conflict",
+          message:
+            "Admin vault resolves to the same PDA as the withdrawing pot. Set KOBA_ADMIN_POT_ID (or KOBA_ADMIN_WALLET) to a different admin pot.",
+        });
       }
       const adminInfo = await connection.getAccountInfo(adminVault, { commitment: "confirmed" });
       if (!adminInfo) {
@@ -2623,6 +2663,13 @@ await prisma.user.upsert({
       }
       if (err?.message === "usdc_mint_missing") {
         return reply.code(400).send({ error: "usdc_mint_missing" });
+      }
+      if (err?.message === "admin_vault_conflict") {
+        return reply.code(400).send({
+          error: "admin_vault_conflict",
+          message:
+            "Admin vault resolves to the same PDA as the withdrawing pot. Set KOBA_ADMIN_POT_ID (or KOBA_ADMIN_WALLET) to a different admin pot.",
+        });
       }
       throw err;
     }
@@ -2661,6 +2708,7 @@ await prisma.user.upsert({
 
     const wd = await prisma.deposit.findFirst({ where: { id: body.withdrawalId, userId: req.user.sub } });
     if (!wd) return reply.code(404).send({ error: 'withdrawal_not_found' });
+    if (rejectRestrictedAdminPot(wd.potId, reply, "withdraw")) return;
 
     const status = String(wd.status);
     if (status === 'WITHDRAW_CONFIRMED') {

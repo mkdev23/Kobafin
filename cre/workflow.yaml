@@ -1,0 +1,7 @@
+user-workflow:
+  workflow-name: "kobafin-v1_5-governance"
+  workflow-path: "./workflow.ts"
+
+workflow-artifacts:
+  config-path: "./config.json"
+  secrets-path: ""

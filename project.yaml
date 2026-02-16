@@ -25,12 +25,24 @@
 
 # ==========================================================================
 staging-settings:
+  user-workflow:
+    workflow-name: "kobafin-v1_5-governance"
+  workflow-artifacts:
+    workflow-path: "./workflow.ts"
+    config-path: "./config.json"
+    secrets-path: "../secrets.yaml"
   rpcs:
     - chain-name: ethereum-testnet-sepolia
       url: https://ethereum-sepolia-rpc.publicnode.com
 
 # ==========================================================================
 production-settings:
+  user-workflow:
+    workflow-name: "kobafin-v1_5-governance"
+  workflow-artifacts:
+    workflow-path: "./workflow.ts"
+    config-path: "./config.json"
+    secrets-path: "../secrets.yaml"
   rpcs:
     - chain-name: ethereum-testnet-sepolia
       url: https://ethereum-sepolia-rpc.publicnode.com

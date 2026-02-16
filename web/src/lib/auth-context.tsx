@@ -5,6 +5,7 @@ import bs58 from "bs58";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { api, User } from "@/lib/api";
 import { clearToken, getToken, setToken } from "@/lib/auth";
+import { getSiwsChainFromEnv } from "@/lib/solana-network";
 
 type AuthState = {
   token: string | null;
@@ -71,7 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: {
           walletAddress,
           domain: window.location.host,
-          chain: opts?.chain || "solana:devnet",
+          chain: opts?.chain || getSiwsChainFromEnv(),
         },
       }
     );

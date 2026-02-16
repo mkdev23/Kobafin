@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/auth-context";
@@ -12,21 +12,45 @@ export default function SignupPage() {
   const router = useRouter();
   const { setVisible } = useWalletModal();
   const wallet = useWallet();
-  const { loginWithSIWS } = useAuth();
+  const { loginWithSIWS, token, isReady } = useAuth();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [pendingConnectAndSignUp, setPendingConnectAndSignUp] = useState(false);
   const privyEnabled = !!process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+
+  useEffect(() => {
+    if (!isReady) return;
+    if (token) router.replace("/home");
+  }, [isReady, token, router]);
+
+  useEffect(() => {
+    if (!pendingConnectAndSignUp || !wallet.connected) return;
+    setPendingConnectAndSignUp(false);
+    (async () => {
+      setErr(null);
+      try {
+        setBusy(true);
+        await loginWithSIWS();
+        router.push("/home");
+      } catch (e: any) {
+        setErr(e?.message || "Sign-up failed");
+      } finally {
+        setBusy(false);
+      }
+    })();
+  }, [pendingConnectAndSignUp, wallet.connected, loginWithSIWS, router]);
 
   async function handleSIWS() {
     setErr(null);
+    if (!wallet.connected) {
+      setPendingConnectAndSignUp(true);
+      setVisible(true);
+      return;
+    }
     try {
       setBusy(true);
-      if (!wallet.connected) {
-        setVisible(true);
-        return;
-      }
       await loginWithSIWS();
-      router.push("/onboarding/form");
+      router.push("/home");
     } catch (e: any) {
       setErr(e?.message || "Sign-up failed");
     } finally {
@@ -43,7 +67,7 @@ export default function SignupPage() {
       <div className="form">
         {privyEnabled ? (
           <PrivyAuthButton
-            onSuccess={() => router.push("/onboarding/form")}
+            onSuccess={() => router.push("/home")}
             onError={(msg) => setErr(msg)}
             loginWithSIWS={loginWithSIWS}
             failureMessage="Privy sign-up failed"
@@ -51,7 +75,13 @@ export default function SignupPage() {
         ) : null}
 
         <button type="button" onClick={handleSIWS} disabled={busy} className="btn btn--primary btn--full">
-          {wallet.connected ? (busy ? "Signing up..." : "Sign up") : "Connect wallet"}
+          {wallet.connected
+            ? busy
+              ? "Signing up..."
+              : "Sign up"
+            : pendingConnectAndSignUp
+              ? "Connecting wallet..."
+              : "Connect wallet"}
         </button>
 
         {err ? <div className="smalllinks" style={{ color: "#dc2626" }}>{err}</div> : null}

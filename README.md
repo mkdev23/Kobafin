@@ -7,12 +7,15 @@ This repository contains the KobaFin savings app plus a V1.5 risk-governance sca
 - `backend/signerService.ts` policy signer service (`POST /update_policy`)
 - `agent/agentServer.ts` advisory agent API (`POST /propose`)
 - `cre/workflow.ts` Chainlink CRE workflow logic (scheduled orchestration)
-- `cre/config.yaml` CRE workflow config
+- `cre/config.json` CRE runtime config
+- `project.yaml` CRE target settings (`staging-settings` / `production-settings`)
 
 ## Important Status
 
-The CRE workflow code is present and type-checked, but this repo was not bootstrapped with a generated CRE project yet.  
-If your installed Chainlink CRE CLI expects project metadata, run `cre init` once in this directory and map it to the existing `cre/workflow.ts` and `cre/config.yaml`.
+CRE simulation in this repo now requires:
+- `project.yaml` target entries with `user-workflow` + `workflow-artifacts`
+- `cre/package.json` with `@chainlink/cre-sdk`
+- one-time `bun x cre-setup` inside `cre/`
 
 ## How CRE And AI Are Used
 
@@ -32,6 +35,7 @@ If your installed Chainlink CRE CLI expects project metadata, run `cre init` onc
 
 - Node.js 20+
 - npm
+- Bun runtime
 - Solana CLI
 - Anchor CLI
 - Devnet SOL for testing
@@ -92,6 +96,17 @@ cd backend
 npm run dev:agent
 ```
 
+Agent supports deterministic mode or LLM mode via env:
+
+```bash
+# Optional: LLM-backed agent
+AGENT_MODE="auto" # auto | llm | rules
+OPENAI_API_KEY="..."
+OPENAI_MODEL="gpt-4.1-mini"
+OPENAI_BASE_URL="https://api.openai.com/v1"
+AGENT_TIMEOUT_MS="12000"
+```
+
 Terminal D (web app):
 
 ```bash
@@ -104,6 +119,7 @@ Set `web/.env.local`:
 
 ```bash
 NEXT_PUBLIC_API_BASE="http://localhost:3001"
+NEXT_PUBLIC_SOLANA_CHAIN="devnet" # devnet | testnet | mainnet-beta
 ```
 
 Terminal E (optional smoke test):
@@ -154,34 +170,55 @@ After deploy, ensure program id is aligned in:
 - `anchor/kobafin_escrow/Anchor.toml`
 - `backend/.env` (`KOBA_ESCROW_PROGRAM_ID`)
 
-## 6) CRE Bootstrap (If Needed)
-
-If your CRE CLI requires initialization metadata in this repository:
+## 6) CRE Setup
 
 ```bash
-
-cre init
+cd cre
+bun install
+PATH=/snap/bin:$PATH bun x cre-setup
 ```
 
-Then point CRE to:
+Then set runtime endpoints in `cre/config.json`:
+- `govBackendBaseUrl`
+- `agentBaseUrl`
+- `signerBaseUrl`
+- Chainlink feed URLs (`chainlinkSolanaBtcUsdUrl`, `chainlinkSolanaEthUsdUrl`, `chainlinkSolanaSolUsdUrl`)
 
-- workflow entrypoint: `cre/workflow.ts`
-- handler: `run`
-- config: `cre/config.yaml`
+## 7) Proof Of Real CRE Execution
 
-CLI command names can vary by CRE version. Use:
+`smoke:v15` proves service wiring, but it is not a CRE-triggered run.  
+For hackathon evidence, run CRE directly after login.
+
+1. Install CRE CLI (WSL):
 
 ```bash
-cre --help
-cre init --help
+curl -sSL https://cre.chain.link/install.sh | bash
 ```
 
-and select the equivalent run/validate commands for your installed version.
+2. Login:
 
-## 7) Current V1.5 Files
+```bash
+~/.cre/bin/cre login
+```
+
+3. Run a CRE simulation using this workflow:
+
+```bash
+cd /mnt/c/users/mukub/projects/kobafin
+PATH=/snap/bin:$PATH ~/.cre/bin/cre workflow simulate ./cre --non-interactive --trigger-index 0 --engine-logs -e backend/.env
+```
+
+4. Capture evidence in logs:
+- backend log should show `governance_pods_requested` / `governance_pods_response` with `creRunId`
+- agent log should show `agent_propose` with same `creRunId`
+- signer log should show `signer_update_policy_received` and tx result with same `creRunId`
+- signer response should contain on-chain `signature` when fallback is off and program supports `update_policy`
+
+## 8) Current V1.5 Files
 
 - `cre/workflow.ts`
-- `cre/config.yaml`
+- `cre/config.json`
+- `project.yaml`
 - `backend/policyClamp.ts`
 - `backend/signerService.ts`
 - `agent/agentServer.ts`

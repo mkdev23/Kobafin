@@ -1,66 +1,26 @@
-import { applyPolicyClamp, RiskState } from "../backend/policyClamp";
+import {
+  Runner,
+  cre,
+  consensusIdenticalAggregation,
+  ok,
+  text,
+  type NodeRuntime,
+  type Runtime,
+} from "@chainlink/cre-sdk";
+import { applyPolicyClamp, type RiskState } from "../backend/policyClamp";
 
-/**
- * Chainlink CRE workflow for KobaFin V1.5.
- *
- * Trigger:
- * - Scheduled cron execution (configured in `cre/config.yaml`).
- *
- * Capabilities used:
- * - HTTPClient capability: backend state, Chainlink feed reads, agent proposal, signer update.
- * - Onchain read/write capability: read pod config account and write workflow audit marker.
- *
- * Chainlink reference:
- * - Solana Data Feeds are treated as canonical price source for BTC/USD, ETH/USD, SOL/USD.
- * - Feed endpoints are injected via env to align with the active CRE deployment docs/config.
- */
-
-type HttpRequest = {
-  method: "GET" | "POST";
-  url: string;
-  headers?: Record<string, string>;
-  body?: unknown;
+type WorkflowConfig = {
+  schedule: string;
+  govBackendBaseUrl: string;
+  agentBaseUrl: string;
+  signerBaseUrl: string;
+  internalApiKey?: string;
+  chainlinkSolanaBtcUsdUrl: string;
+  chainlinkSolanaEthUsdUrl: string;
+  chainlinkSolanaSolUsdUrl: string;
+  wrapDivergenceCautionPct: number;
+  wrapDivergenceRiskOffPct: number;
 };
-
-type HttpResponse<T> = {
-  statusCode: number;
-  data: T;
-};
-
-interface HttpClientCapability {
-  request<T = unknown>(req: HttpRequest): Promise<HttpResponse<T>>;
-}
-
-interface OnchainCapability {
-  readPodConfig(podId: string): Promise<{
-    pod_id: string;
-    risk_state: RiskState;
-    target_allocations_bps: { usdc: number; btc: number; eth: number; sol: number };
-    usdc_in_lulo_bps: number;
-  }>;
-  writeWorkflowAudit(input: {
-    pod_id: string;
-    run_id: string;
-    risk_state: RiskState;
-    target_allocations_bps: { usdc: number; btc: number; eth: number; sol: number };
-    usdc_in_lulo_bps: number;
-  }): Promise<{ signature: string }>;
-}
-
-interface WorkflowContext {
-  http: HttpClientCapability;
-  onchain: OnchainCapability;
-  env: Record<string, string | undefined>;
-  trigger: {
-    type: "cron" | "event";
-    firedAt: string;
-  };
-  logger: {
-    info(v: unknown, msg?: string): void;
-    warn(v: unknown, msg?: string): void;
-    error(v: unknown, msg?: string): void;
-  };
-}
 
 type BackendPodSnapshot = {
   pod_id: string;
@@ -80,6 +40,19 @@ type BackendPodSnapshot = {
   };
 };
 
+type GovernancePodsResponse = {
+  pods: BackendPodSnapshot[];
+};
+
+type FeedResponse = {
+  answer?: number | string;
+  price?: number | string;
+  data?: {
+    answer?: number | string;
+    price?: number | string;
+  };
+};
+
 type AgentProposalResponse = {
   proposed_weights_pct: { usdc: number; btc: number; eth: number; sol: number };
   proposed_usdc_in_lulo_pct?: number;
@@ -88,43 +61,89 @@ type AgentProposalResponse = {
   reason: string;
 };
 
-type FeedResponse = {
-  answer?: number | string;
-  price?: number | string;
-  updatedAt?: string;
-  data?: {
-    answer?: number | string;
-    price?: number | string;
-    updatedAt?: string;
-  };
+type SignerUpdateResponse = {
+  ok?: boolean;
+  signature?: string | null;
+  simulated?: boolean;
+  warning?: string;
+  [key: string]: unknown;
 };
 
-type WorkflowPodResult = {
+type PodResult = {
   pod_id: string;
   risk_state: RiskState;
-  signer_signature?: string;
-  audit_signature?: string;
   divergence_pct: number;
+  signer_signature: string | null;
+  simulated: boolean;
 };
 
-export const metadata = {
-  workflow_id: "kobafin-v1_5-governance",
-  trigger: "cron",
-  schedule: "*/15 * * * *",
-};
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
-function required(env: Record<string, string | undefined>, key: string): string {
-  const v = env[key];
-  if (!v) throw new Error(`missing_env:${key}`);
-  return v;
+function parseConfig(bytes: Uint8Array): WorkflowConfig {
+  const raw = decoder.decode(bytes);
+  const cfg = JSON.parse(raw) as Partial<WorkflowConfig>;
+  return {
+    schedule: cfg.schedule || "*/15 * * * *",
+    govBackendBaseUrl: String(cfg.govBackendBaseUrl || "http://localhost:3001"),
+    agentBaseUrl: String(cfg.agentBaseUrl || "http://localhost:3020"),
+    signerBaseUrl: String(cfg.signerBaseUrl || "http://localhost:3010"),
+    internalApiKey: cfg.internalApiKey || "",
+    chainlinkSolanaBtcUsdUrl: String(cfg.chainlinkSolanaBtcUsdUrl || ""),
+    chainlinkSolanaEthUsdUrl: String(cfg.chainlinkSolanaEthUsdUrl || ""),
+    chainlinkSolanaSolUsdUrl: String(cfg.chainlinkSolanaSolUsdUrl || ""),
+    wrapDivergenceCautionPct: Number(cfg.wrapDivergenceCautionPct ?? 2),
+    wrapDivergenceRiskOffPct: Number(cfg.wrapDivergenceRiskOffPct ?? 5),
+  };
 }
 
-async function httpJson<T>(ctx: WorkflowContext, req: HttpRequest): Promise<T> {
-  const res = await ctx.http.request<T>(req);
-  if (res.statusCode < 200 || res.statusCode >= 300) {
-    throw new Error(`http_error:${res.statusCode}:${req.method}:${req.url}`);
-  }
-  return res.data;
+function nodeGet(runtime: Runtime<WorkflowConfig>, url: string, headers: Record<string, string>): string {
+  const http = new cre.capabilities.HTTPClient();
+  const fn = runtime.runInNodeMode(
+    (nodeRuntime: NodeRuntime<WorkflowConfig>, input: { url: string; headers: Record<string, string> }) => {
+      const res = http.sendRequest(nodeRuntime, { method: "GET", url: input.url, headers: input.headers }).result();
+      if (!ok(res)) {
+        throw new Error(`http_get_failed:${res.statusCode}:${input.url}`);
+      }
+      return text(res);
+    },
+    consensusIdenticalAggregation<string>()
+  );
+  return fn({ url, headers }).result();
+}
+
+function nodePost(
+  runtime: Runtime<WorkflowConfig>,
+  url: string,
+  headers: Record<string, string>,
+  body: unknown
+): string {
+  const http = new cre.capabilities.HTTPClient();
+  const fn = runtime.runInNodeMode(
+    (
+      nodeRuntime: NodeRuntime<WorkflowConfig>,
+      input: { url: string; headers: Record<string, string>; body: string }
+    ) => {
+      const res = http
+        .sendRequest(nodeRuntime, {
+          method: "POST",
+          url: input.url,
+          headers: input.headers,
+          body: encoder.encode(input.body),
+        })
+        .result();
+      if (!ok(res)) {
+        throw new Error(`http_post_failed:${res.statusCode}:${input.url}`);
+      }
+      return text(res);
+    },
+    consensusIdenticalAggregation<string>()
+  );
+  return fn({ url, headers, body: JSON.stringify(body) }).result();
+}
+
+function parseJson<T>(raw: string): T {
+  return JSON.parse(raw) as T;
 }
 
 function feedValue(feed: FeedResponse, fallback: number): number {
@@ -142,26 +161,16 @@ function sanitizeUsdcPerAssetSpot(
   label: string,
   spotUsdcPerAsset: number,
   oracleUsdPerAsset: number,
-  logger: WorkflowContext["logger"]
+  runtime: Runtime<WorkflowConfig>
 ): number {
   if (!Number.isFinite(spotUsdcPerAsset) || spotUsdcPerAsset <= 0) {
-    logger.warn(
-      { label, spot: spotUsdcPerAsset, oracle: oracleUsdPerAsset },
-      "invalid dex spot quote; falling back to oracle for divergence calculation"
-    );
+    runtime.log(`invalid dex spot for ${label}; using oracle fallback`);
     return oracleUsdPerAsset;
   }
-
-  // Guardrail: reject obviously malformed quote scales to keep divergence apples-to-apples.
-  // We compare USDC-per-asset DEX spot vs USD-per-asset oracle (USDC ~= USD).
   if (spotUsdcPerAsset > oracleUsdPerAsset * 20 || spotUsdcPerAsset < oracleUsdPerAsset / 20) {
-    logger.warn(
-      { label, spot: spotUsdcPerAsset, oracle: oracleUsdPerAsset },
-      "dex spot quote scale looks invalid; falling back to oracle for divergence calculation"
-    );
+    runtime.log(`spot/oracle scale mismatch for ${label}; using oracle fallback`);
     return oracleUsdPerAsset;
   }
-
   return spotUsdcPerAsset;
 }
 
@@ -176,109 +185,96 @@ function riskFromDivergence(maxDivPct: number, cautionThreshold: number, riskOff
   return "NORMAL";
 }
 
-/**
- * Main CRE handler.
- * Uses HTTPClient single-execution pattern by setting an idempotency key per pod/run.
- */
-export async function run(ctx: WorkflowContext): Promise<{ results: WorkflowPodResult[] }> {
-  const backendBase = required(ctx.env, "GOV_BACKEND_BASE_URL");
-  const agentBase = required(ctx.env, "AGENT_BASE_URL");
-  const signerBase = required(ctx.env, "SIGNER_BASE_URL");
-  const internalKey = ctx.env.INTERNAL_API_KEY || "";
-  const cautionThreshold = Number(ctx.env.WRAP_DIVERGENCE_CAUTION_PCT || "2");
-  const riskOffThreshold = Number(ctx.env.WRAP_DIVERGENCE_RISK_OFF_PCT || "5");
+function makeHeaders(cfg: WorkflowConfig, runId: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "x-cre-run-id": runId,
+  };
+  if (cfg.internalApiKey) headers["x-internal-key"] = cfg.internalApiKey;
+  return headers;
+}
 
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (internalKey) headers["x-internal-key"] = internalKey;
+function execute(runtime: Runtime<WorkflowConfig>): { run_id: string; results: PodResult[] } {
+  const cfg = runtime.config;
+  const runId = new Date().toISOString();
+  const headers = makeHeaders(cfg, runId);
+  runtime.log(`governance_run_start ${runId}`);
 
-  const pods = await httpJson<{ pods: BackendPodSnapshot[] }>(ctx, {
-    method: "GET",
-    url: `${backendBase}/v1/governance/pods`,
-    headers,
-  });
+  const podsRaw = nodeGet(runtime, `${cfg.govBackendBaseUrl}/v1/governance/pods`, headers);
+  const podsResponse = parseJson<GovernancePodsResponse>(podsRaw);
+  const results: PodResult[] = [];
 
-  const btcFeedUrl = required(ctx.env, "CHAINLINK_SOLANA_BTC_USD_URL");
-  const ethFeedUrl = required(ctx.env, "CHAINLINK_SOLANA_ETH_USD_URL");
-  const solFeedUrl = required(ctx.env, "CHAINLINK_SOLANA_SOL_USD_URL");
+  for (const pod of podsResponse.pods) {
+    runtime.log(`governance_pod_start ${pod.pod_id}`);
 
-  const results: WorkflowPodResult[] = [];
-  const runId = `${ctx.trigger.firedAt}`;
-
-  for (const pod of pods.pods) {
-    // Onchain read: current authoritative config account state.
-    const onchainState = await ctx.onchain.readPodConfig(pod.pod_id);
-
-    const [btcFeed, ethFeed, solFeed] = await Promise.all([
-      httpJson<FeedResponse>(ctx, { method: "GET", url: btcFeedUrl, headers }),
-      httpJson<FeedResponse>(ctx, { method: "GET", url: ethFeedUrl, headers }),
-      httpJson<FeedResponse>(ctx, { method: "GET", url: solFeedUrl, headers }),
-    ]);
+    const btcFeed = parseJson<FeedResponse>(
+      nodeGet(runtime, cfg.chainlinkSolanaBtcUsdUrl, headers)
+    );
+    const ethFeed = parseJson<FeedResponse>(
+      nodeGet(runtime, cfg.chainlinkSolanaEthUsdUrl, headers)
+    );
+    const solFeed = parseJson<FeedResponse>(
+      nodeGet(runtime, cfg.chainlinkSolanaSolUsdUrl, headers)
+    );
 
     const btcOracle = feedValue(btcFeed, pod.dex_spot_prices.btcb_usdc);
     const ethOracle = feedValue(ethFeed, pod.dex_spot_prices.weth_usdc);
     const solOracle = feedValue(solFeed, pod.dex_spot_prices.sol_usdc);
 
-    // Apples-to-apples divergence check:
-    // - DEX spot must be quoted as USDC per 1 BTC.b / WETH.
-    // - Chainlink feeds are USD per 1 BTC / ETH.
-    // - We compare them directly under USDC ~= USD assumption with quote-format guardrails.
+    // Apples-to-apples quote check:
+    // DEX spot is USDC-per-asset and oracle is USD-per-asset (USDC ~= USD).
     const btcbSpot = sanitizeUsdcPerAssetSpot(
       "BTC.b/USDC",
       pod.dex_spot_prices.btcb_usdc,
       btcOracle,
-      ctx.logger
+      runtime
     );
     const wethSpot = sanitizeUsdcPerAssetSpot(
       "WETH/USDC",
       pod.dex_spot_prices.weth_usdc,
       ethOracle,
-      ctx.logger
+      runtime
     );
 
     const btcbDiv = divergencePct(btcbSpot, btcOracle);
     const wethDiv = divergencePct(wethSpot, ethOracle);
     const maxDiv = Math.max(btcbDiv, wethDiv);
 
-    const divergenceRisk = riskFromDivergence(maxDiv, cautionThreshold, riskOffThreshold);
+    const divergenceRisk = riskFromDivergence(
+      maxDiv,
+      cfg.wrapDivergenceCautionPct,
+      cfg.wrapDivergenceRiskOffPct
+    );
 
-    const agent = await httpJson<AgentProposalResponse>(ctx, {
-      method: "POST",
-      url: `${agentBase}/propose`,
-      headers,
-      body: {
-        pod_id: pod.pod_id,
-        pod_tier: pod.pod_tier,
-        oracle_prices: {
-          btc_usd: btcOracle,
-          eth_usd: ethOracle,
-          sol_usd: solOracle,
-        },
-        dex_spot_prices: {
-          ...pod.dex_spot_prices,
-          btcb_usdc: btcbSpot,
-          weth_usdc: wethSpot,
-        },
-        divergence: {
-          btcb_pct: btcbDiv,
-          weth_pct: wethDiv,
-          max_pct: maxDiv,
-        },
-        current_state: {
-          weights_pct: pod.current_weights_pct,
-          risk_state: onchainState.risk_state,
-        },
-        volatility: {},
+    const agentRaw = nodePost(runtime, `${cfg.agentBaseUrl}/propose`, headers, {
+      pod_id: pod.pod_id,
+      pod_tier: pod.pod_tier,
+      oracle_prices: {
+        btc_usd: btcOracle,
+        eth_usd: ethOracle,
+        sol_usd: solOracle,
       },
+      dex_spot_prices: {
+        btcb_usdc: btcbSpot,
+        weth_usdc: wethSpot,
+        sol_usdc: pod.dex_spot_prices.sol_usdc,
+      },
+      divergence: {
+        btcb_pct: btcbDiv,
+        weth_pct: wethDiv,
+        max_pct: maxDiv,
+      },
+      current_state: {
+        weights_pct: pod.current_weights_pct,
+        risk_state: pod.current_risk_state,
+      },
+      volatility: {},
     });
 
+    const agent = parseJson<AgentProposalResponse>(agentRaw);
     const mergedRisk = maxRisk(agent.proposed_risk_state, divergenceRisk);
-    const onchainUsdcInLuloPct = Math.max(0, onchainState.usdc_in_lulo_bps / 100);
-    const agentUsdcInLuloPctRaw =
-      agent.proposed_usdc_in_lulo_pct ?? agent.usdc_in_lulo_pct;
     const requestedUsdcInLuloPct =
-      agentUsdcInLuloPctRaw == null
-        ? onchainUsdcInLuloPct
-        : Number(agentUsdcInLuloPctRaw);
+      agent.proposed_usdc_in_lulo_pct ?? agent.usdc_in_lulo_pct ?? pod.policy.min_usdc_in_lulo_pct;
 
     const clamped = applyPolicyClamp({
       podId: pod.pod_id,
@@ -289,52 +285,37 @@ export async function run(ctx: WorkflowContext): Promise<{ results: WorkflowPodR
       reason: agent.reason,
     });
 
-    // HTTP write: signer is the execution boundary for onchain policy update tx.
-    const signerHeaders = {
-      ...headers,
-      "x-idempotency-key": `${pod.pod_id}:${runId}`,
-    };
-    const signerRes = await httpJson<{ signature?: string }>(ctx, {
-      method: "POST",
-      url: `${signerBase}/update_policy`,
-      headers: signerHeaders,
-      body: {
-        pod_id: pod.pod_id,
-        target_allocations_bps: clamped.targetAllocationsBps,
-        usdc_in_lulo_bps: clamped.usdcInLuloBps,
-        risk_state: clamped.riskState,
-        reason: clamped.reason,
-      },
-    });
-
-    // Onchain write: workflow audit marker for traceability.
-    const audit = await ctx.onchain.writeWorkflowAudit({
+    const signerRaw = nodePost(runtime, `${cfg.signerBaseUrl}/update_policy`, headers, {
       pod_id: pod.pod_id,
-      run_id: runId,
-      risk_state: clamped.riskState,
       target_allocations_bps: clamped.targetAllocationsBps,
       usdc_in_lulo_bps: clamped.usdcInLuloBps,
+      risk_state: clamped.riskState,
+      reason: clamped.reason,
     });
 
-    ctx.logger.info(
-      {
-        pod_id: pod.pod_id,
-        divergence_pct: maxDiv,
-        risk_state: clamped.riskState,
-        target_allocations_bps: clamped.targetAllocationsBps,
-        usdc_in_lulo_bps: clamped.usdcInLuloBps,
-      },
-      "pod policy updated"
-    );
-
+    const signer = parseJson<SignerUpdateResponse>(signerRaw);
     results.push({
       pod_id: pod.pod_id,
-      divergence_pct: maxDiv,
       risk_state: clamped.riskState,
-      signer_signature: signerRes.signature,
-      audit_signature: audit.signature,
+      divergence_pct: maxDiv,
+      signer_signature: signer.signature ?? null,
+      simulated: Boolean(signer.simulated),
     });
   }
 
-  return { results };
+  runtime.log(`governance_run_complete ${runId} pods=${results.length}`);
+  return { run_id: runId, results };
 }
+
+function initWorkflow(config: WorkflowConfig) {
+  const cron = new cre.capabilities.CronCapability();
+  const trigger = cron.trigger({ schedule: config.schedule });
+  return [cre.handler(trigger, (runtime) => execute(runtime))];
+}
+
+export async function main() {
+  const runner = await Runner.newRunner<WorkflowConfig>({ configParser: parseConfig });
+  await runner.run((config) => initWorkflow(config));
+}
+
+await main();

@@ -2,6 +2,7 @@ import { createServer, IncomingMessage, ServerResponse } from "node:http";
 
 type PodTier = "LOW" | "MEDIUM" | "HIGH";
 type RiskState = "NORMAL" | "CAUTION" | "RISK_OFF";
+type AgentMode = "rules" | "llm" | "auto";
 
 type FeaturesRequest = {
   pod_id: string;
@@ -47,11 +48,23 @@ type AgentResponse = {
   reason: string;
 };
 
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const AGENT_TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS || 12_000);
+const agentMode = ((process.env.AGENT_MODE || "auto").toLowerCase() as AgentMode);
+
 function parseTier(value: string): PodTier {
   const v = (value || "").toUpperCase();
   if (v === "LOW") return "LOW";
   if (v === "MEDIUM" || v === "MED") return "MEDIUM";
   return "HIGH";
+}
+
+function parseRiskState(value: unknown): RiskState | null {
+  const v = String(value || "").toUpperCase();
+  if (v === "NORMAL" || v === "CAUTION" || v === "RISK_OFF") return v;
+  return null;
 }
 
 function normalize(weights: AgentResponse["proposed_weights_pct"]) {
@@ -74,7 +87,7 @@ function baseline(tier: PodTier) {
   return { usdc: 42, btc: 24, eth: 18, sol: 16 };
 }
 
-function propose(features: FeaturesRequest): AgentResponse {
+function proposeRules(features: FeaturesRequest): AgentResponse {
   const tier = parseTier(features.pod_tier);
   let w = baseline(tier);
   let risk: RiskState = "NORMAL";
@@ -113,6 +126,138 @@ function propose(features: FeaturesRequest): AgentResponse {
   };
 }
 
+type LlmProposal = {
+  proposed_weights_pct?: {
+    usdc?: number;
+    btc?: number;
+    eth?: number;
+    sol?: number;
+  };
+  proposed_risk_state?: string;
+  reason?: string;
+};
+
+function sanitizeWeights(input?: LlmProposal["proposed_weights_pct"]) {
+  return {
+    usdc: Math.max(0, Number(input?.usdc ?? 0)),
+    btc: Math.max(0, Number(input?.btc ?? 0)),
+    eth: Math.max(0, Number(input?.eth ?? 0)),
+    sol: Math.max(0, Number(input?.sol ?? 0)),
+  };
+}
+
+function extractJsonObject(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) return raw.slice(start, end + 1);
+  return raw;
+}
+
+async function callOpenAI(features: FeaturesRequest, baselineProposal: AgentResponse): Promise<AgentResponse> {
+  const timeout = Number.isFinite(AGENT_TIMEOUT_MS) ? Math.max(1_000, AGENT_TIMEOUT_MS) : 12_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  const systemPrompt = [
+    "You are KobaFin's risk-advisory allocator for pod portfolios.",
+    "Return only JSON with fields: proposed_weights_pct, proposed_risk_state, reason.",
+    "Risk state must be one of: NORMAL, CAUTION, RISK_OFF.",
+    "proposed_weights_pct must include usdc, btc, eth, sol as numeric percentages.",
+    "Do not include markdown or extra keys."
+  ].join(" ");
+
+  const userPrompt = JSON.stringify(
+    {
+      task: "Propose advisory allocation for a single pod using provided features.",
+      constraints: {
+        advisory_only: true,
+        hard_policy_enforced_elsewhere: true,
+      },
+      baseline: baselineProposal,
+      features,
+      output_shape: {
+        proposed_weights_pct: { usdc: "number", btc: "number", eth: "number", sol: "number" },
+        proposed_risk_state: "NORMAL|CAUTION|RISK_OFF",
+        reason: "string",
+      },
+    },
+    null,
+    2
+  );
+
+  try {
+    const res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        temperature: 0.1,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      throw new Error(`openai_http_${res.status}:${errBody.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as any;
+    const content = String(payload?.choices?.[0]?.message?.content || "");
+    if (!content) throw new Error("openai_empty_content");
+
+    const parsed = JSON.parse(extractJsonObject(content)) as LlmProposal;
+    const risk = parseRiskState(parsed.proposed_risk_state);
+    if (!risk) throw new Error("openai_invalid_risk_state");
+
+    const weights = normalize(sanitizeWeights(parsed.proposed_weights_pct));
+    const reason = String(parsed.reason || "").trim() || "LLM advisory proposal";
+    return {
+      proposed_weights_pct: weights,
+      proposed_risk_state: risk,
+      reason,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function propose(features: FeaturesRequest): Promise<{ output: AgentResponse; source: "rules" | "llm" }> {
+  const fallback = proposeRules(features);
+  const llmEnabled = Boolean(OPENAI_API_KEY);
+
+  if (agentMode === "rules") {
+    return { output: fallback, source: "rules" };
+  }
+
+  if ((agentMode === "llm" || agentMode === "auto") && llmEnabled) {
+    try {
+      const llm = await callOpenAI(features, fallback);
+      return { output: llm, source: "llm" };
+    } catch (err: any) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          msg: "agent_llm_fallback",
+          error: err?.message || String(err),
+        })
+      );
+      if (agentMode === "llm") throw err;
+      return { output: fallback, source: "rules" };
+    }
+  }
+
+  return { output: fallback, source: "rules" };
+}
+
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -128,14 +273,34 @@ function json(res: ServerResponse, statusCode: number, body: unknown) {
 
 const server = createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/health") {
-    return json(res, 200, { ok: true, service: "kobafin-agent-stub" });
+    return json(res, 200, {
+      ok: true,
+      service: "kobafin-agent",
+      mode: agentMode,
+      llm_enabled: Boolean(OPENAI_API_KEY),
+      model: OPENAI_MODEL,
+    });
   }
 
   if (req.method === "POST" && req.url === "/propose") {
     try {
+      const creRunId = String(req.headers["x-cre-run-id"] || "");
       const body = (await readJson(req)) as FeaturesRequest;
-      const out = propose(body);
-      return json(res, 200, out);
+      const { output, source } = await propose(body);
+      if (creRunId) {
+        // eslint-disable-next-line no-console
+        console.log(
+          JSON.stringify({
+            msg: "agent_propose",
+            creRunId,
+            pod_id: body.pod_id,
+            pod_tier: body.pod_tier,
+            source,
+            proposed_risk_state: output.proposed_risk_state,
+          })
+        );
+      }
+      return json(res, 200, output);
     } catch (err: any) {
       return json(res, 400, { error: err?.message || "bad_request" });
     }
@@ -147,6 +312,7 @@ const server = createServer(async (req, res) => {
 const port = Number(process.env.AGENT_PORT || 3020);
 server.listen(port, "0.0.0.0", () => {
   // eslint-disable-next-line no-console
-  console.log(`agent service listening on :${port}`);
+  console.log(
+    `agent service listening on :${port} mode=${agentMode} llm_enabled=${Boolean(OPENAI_API_KEY)} model=${OPENAI_MODEL}`
+  );
 });
-

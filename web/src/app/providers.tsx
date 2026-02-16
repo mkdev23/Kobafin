@@ -8,13 +8,13 @@ import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { clusterApiUrl } from "@solana/web3.js";
+import { getSolanaClusterFromEnv } from "@/lib/solana-network";
 
 import "@solana/wallet-adapter-react-ui/styles.css";
 import { AuthProvider } from "@/lib/auth-context";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  // DEVNET for PoC (easy to airdrop SOL and test real on-chain transfers).
-  const endpoint = useMemo(() => clusterApiUrl("devnet"), []);
+  const endpoint = useMemo(() => clusterApiUrl(getSolanaClusterFromEnv()), []);
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID || "";
   const privyConfig = useMemo<PrivyClientConfig>(

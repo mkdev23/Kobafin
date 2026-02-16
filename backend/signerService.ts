@@ -220,6 +220,10 @@ async function main() {
 
   app.post("/update_policy", async (req, reply) => {
     const body = payloadSchema.parse(req.body);
+    const creRunId = String((req.headers as any)["x-cre-run-id"] || "");
+    if (creRunId) {
+      req.log.info({ creRunId, pod_id: body.pod_id }, "signer_update_policy_received");
+    }
     const targetBps = body.target_allocations_bps
       ? body.target_allocations_bps
       : body.target_allocations_pct
@@ -279,7 +283,7 @@ async function main() {
         shadowPolicyStore.set(body.pod_id, snapshot);
 
         req.log.warn(
-          { pod_id: body.pod_id },
+          { pod_id: body.pod_id, creRunId: creRunId || undefined },
           "onchain update_policy instruction missing; stored policy offchain fallback"
         );
         return reply.send({
@@ -296,7 +300,7 @@ async function main() {
         });
       }
 
-      req.log.error({ err }, "update_policy_failed");
+      req.log.error({ err, creRunId: creRunId || undefined, pod_id: body.pod_id }, "update_policy_failed");
       return reply.code(500).send({
         error: "update_policy_failed",
         message: err?.message || String(err),

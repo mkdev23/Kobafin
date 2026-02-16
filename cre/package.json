@@ -1,0 +1,13 @@
+{
+  "name": "kobafin-cre-workflow",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cre-compile": "bun ./node_modules/@chainlink/cre-sdk/bin/cre-compile.ts",
+    "cre-compile-workflow": "bun ./node_modules/@chainlink/cre-sdk-javy-plugin/bin/compile-workflow.ts",
+    "postinstall": "node ./scripts/fix-cre-sdk-plugin.mjs"
+  },
+  "dependencies": {
+    "@chainlink/cre-sdk": "^1.0.9"
+  }
+}

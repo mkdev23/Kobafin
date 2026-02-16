@@ -1,6 +1,19 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 
 export default function WelcomePage() {
+  const router = useRouter();
+  const { token, isReady } = useAuth();
+
+  useEffect(() => {
+    if (!isReady) return;
+    if (token) router.replace("/home");
+  }, [isReady, token, router]);
+
   return (
     <div className="page">
       <div className="center">

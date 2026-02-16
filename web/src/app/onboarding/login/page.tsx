@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/auth-context";
@@ -12,19 +12,43 @@ export default function LoginPage() {
   const router = useRouter();
   const { setVisible } = useWalletModal();
   const wallet = useWallet();
-  const { loginWithSIWS } = useAuth();
+  const { loginWithSIWS, token, isReady } = useAuth();
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingConnectAndSignIn, setPendingConnectAndSignIn] = useState(false);
   const privyEnabled = !!process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+
+  useEffect(() => {
+    if (!isReady) return;
+    if (token) router.replace("/home");
+  }, [isReady, token, router]);
+
+  useEffect(() => {
+    if (!pendingConnectAndSignIn || !wallet.connected) return;
+    setPendingConnectAndSignIn(false);
+    (async () => {
+      setErr(null);
+      try {
+        setBusy(true);
+        await loginWithSIWS();
+        router.push("/home");
+      } catch (e: any) {
+        setErr(e?.message || "Sign-in failed");
+      } finally {
+        setBusy(false);
+      }
+    })();
+  }, [pendingConnectAndSignIn, wallet.connected, loginWithSIWS, router]);
 
   async function handleSIWS() {
     setErr(null);
+    if (!wallet.connected) {
+      setPendingConnectAndSignIn(true);
+      setVisible(true);
+      return;
+    }
     try {
       setBusy(true);
-      if (!wallet.connected) {
-        setVisible(true);
-        return;
-      }
       await loginWithSIWS();
       router.push("/home");
     } catch (e: any) {
@@ -51,7 +75,13 @@ export default function LoginPage() {
         ) : null}
 
         <button type="button" onClick={handleSIWS} disabled={busy} className="btn btn--primary btn--full">
-          {wallet.connected ? (busy ? "Signing in..." : "Sign in") : "Connect wallet"}
+          {wallet.connected
+            ? busy
+              ? "Signing in..."
+              : "Sign in"
+            : pendingConnectAndSignIn
+              ? "Connecting wallet..."
+              : "Connect wallet"}
         </button>
 
         {err ? <div className="smalllinks" style={{ color: "#dc2626" }}>{err}</div> : null}

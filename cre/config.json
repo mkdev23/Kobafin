@@ -1,0 +1,12 @@
+{
+  "schedule": "*/15 * * * *",
+  "govBackendBaseUrl": "http://localhost:3001",
+  "agentBaseUrl": "http://localhost:3020",
+  "signerBaseUrl": "http://localhost:3010",
+  "internalApiKey": "u95EQqpZO2Psw1Dlm_4HHyzOwDF2u0t0tVnbSIFsAio",
+  "chainlinkSolanaBtcUsdUrl": "http://localhost:3001/v1/lulo/rates",
+  "chainlinkSolanaEthUsdUrl": "http://localhost:3001/v1/lulo/rates",
+  "chainlinkSolanaSolUsdUrl": "http://localhost:3001/v1/lulo/rates",
+  "wrapDivergenceCautionPct": 2,
+  "wrapDivergenceRiskOffPct": 5
+}

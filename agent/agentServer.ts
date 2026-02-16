@@ -51,6 +51,7 @@ type AgentResponse = {
 const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const INTERNAL_API_KEY = process.env.AGENT_INTERNAL_API_KEY || process.env.INTERNAL_API_KEY || "";
 const AGENT_TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS || 12_000);
 const agentMode = ((process.env.AGENT_MODE || "auto").toLowerCase() as AgentMode);
 
@@ -283,6 +284,12 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && req.url === "/propose") {
+    if (INTERNAL_API_KEY) {
+      const provided = String(req.headers["x-internal-key"] || "");
+      if (provided !== INTERNAL_API_KEY) {
+        return json(res, 401, { error: "unauthorized_internal" });
+      }
+    }
     try {
       const creRunId = String(req.headers["x-cre-run-id"] || "");
       const body = (await readJson(req)) as FeaturesRequest;

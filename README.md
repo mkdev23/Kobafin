@@ -62,6 +62,15 @@ SOLANA_KEYPAIR_PATH="/home/mukub/.config/solana/id.json"
 
 SIGNER_PORT="3010"
 SIGNER_ALLOW_OFFCHAIN_POLICY="true"
+
+# Internal auth + CORS hardening
+INTERNAL_API_KEY="replace-with-long-random-string"
+CORS_ALLOWED_ORIGINS="http://localhost:3000,https://your-frontend.vercel.app"
+SIGNER_CORS_ALLOWED_ORIGINS="http://localhost:3000,https://your-frontend.vercel.app"
+
+# SIWS abuse protection
+SIWS_RATE_WINDOW_MS="60000"
+SIWS_RATE_MAX_REQUESTS="25"
 ```
 
 Run prisma:
@@ -105,6 +114,9 @@ OPENAI_API_KEY="..."
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_BASE_URL="https://api.openai.com/v1"
 AGENT_TIMEOUT_MS="12000"
+# Optional per-service key override (defaults to INTERNAL_API_KEY)
+# AGENT_INTERNAL_API_KEY="..."
+# SIGNER_INTERNAL_API_KEY="..."
 ```
 
 Terminal D (web app):
@@ -147,6 +159,7 @@ curl -H "x-internal-key: $INTERNAL_API_KEY" http://localhost:3001/v1/governance/
 
 ```bash
 curl -X POST http://localhost:3010/update_policy \
+  -H "x-internal-key: $INTERNAL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"pod_id":"low","target_allocations_bps":{"usdc":7000,"btc":1500,"eth":1000,"sol":500},"usdc_in_lulo_bps":7000,"risk_state":"NORMAL"}'
 ```

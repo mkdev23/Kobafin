@@ -178,6 +178,22 @@ function normalizeApiBase(raw: string) {
   return `https://${trimmed}`;
 }
 
+function parseCsvAllowlist(raw: string | undefined) {
+  return String(raw || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function normalizeOriginValue(origin: string) {
+  return origin.trim().replace(/\/$/, "").toLowerCase();
+}
+
+function corsOriginOptionFromAllowlist(allowlist: string[]) {
+  const normalized = allowlist.map(normalizeOriginValue);
+  return normalized.length ? normalized : true;
+}
+
 function isMainnetEndpoint(raw: string) {
   const v = (raw || "").toLowerCase();
   if (!v) return false;
@@ -197,6 +213,14 @@ const LOCKED_WITHDRAW_FEE_BPS = (() => {
   return Number.isFinite(v) && v >= 0 ? v : 1500;
 })();
 const EMPTY_POT_USD_THRESHOLD = 0.01;
+const SIWS_RATE_WINDOW_MS = (() => {
+  const v = Number(process.env.SIWS_RATE_WINDOW_MS || 60_000);
+  return Number.isFinite(v) && v > 0 ? v : 60_000;
+})();
+const SIWS_RATE_MAX_REQUESTS = (() => {
+  const v = Number(process.env.SIWS_RATE_MAX_REQUESTS || 25);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 25;
+})();
 
 const VAULT_SPACE = 8 + 32 + 32 + 1 + 32 + 32;
 const SOL_USD_CACHE_TTL_MS = 30_000;
@@ -205,6 +229,7 @@ const VAULT_RENT_CACHE_TTL_MS = 60_000;
 let solUsdCache: { value: number; fetchedAt: number } | null = null;
 let assetUsdCache: { value: Record<string, number>; fetchedAt: number } | null = null;
 let vaultRentCache: { value: number; fetchedAt: number } | null = null;
+const siwsRate = new Map<string, { count: number; resetAt: number }>();
 
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
@@ -329,7 +354,8 @@ async function authGuard(req: any, reply: any) {
 
 // ========== ROUTES ==========
 async function registerRoutes() {
-  await app.register(cors, { origin: true });
+  const corsAllowlist = parseCsvAllowlist(process.env.CORS_ALLOWED_ORIGINS);
+  await app.register(cors, { origin: corsOriginOptionFromAllowlist(corsAllowlist) });
   await app.register(jwt, { secret: requireEnv("JWT_SECRET") });
 
   const connection = new Connection(requireEnv("SOLANA_RPC"), "confirmed");
@@ -362,6 +388,31 @@ async function registerRoutes() {
       return false;
     }
     return true;
+  }
+
+  function enforceSiwsRateLimit(req: any, reply: any) {
+    const now = Date.now();
+    const ip = String(req.ip || req.socket?.remoteAddress || "unknown");
+    const key = `siws:${ip}`;
+    const entry = siwsRate.get(key);
+
+    if (!entry || now >= entry.resetAt) {
+      siwsRate.set(key, { count: 1, resetAt: now + SIWS_RATE_WINDOW_MS });
+      return false;
+    }
+
+    if (entry.count >= SIWS_RATE_MAX_REQUESTS) {
+      const retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+      reply
+        .code(429)
+        .header("retry-after", String(retryAfterSec))
+        .send({ error: "rate_limited", retryAfterSec });
+      return true;
+    }
+
+    entry.count += 1;
+    siwsRate.set(key, entry);
+    return false;
   }
 
   function isRestrictedAdminPot(potId: string) {
@@ -502,6 +553,7 @@ async function registerRoutes() {
 
   // ----- SIWS AUTH -----
   app.post("/v1/auth/siws/challenge", async (req, reply) => {
+    if (enforceSiwsRateLimit(req, reply)) return;
     const body = z
       .object({
         walletAddress: z.string().min(32),
@@ -550,6 +602,7 @@ await prisma.user.upsert({
   });
 
   app.post("/v1/auth/siws/verify", async (req, reply) => {
+    if (enforceSiwsRateLimit(req, reply)) return;
     const body = z
       .object({
         walletAddress: z.string().min(32),

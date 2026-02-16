@@ -9,11 +9,13 @@ import { api } from "@/lib/api";
 import { useCurrentPot } from "@/lib/current-pot";
 import { sendPreparedTransaction } from "@/lib/solana-tx";
 import { DisclosuresCard, useDisclosureAcceptance } from "@/components/disclosures";
+import { usePrivySolanaWallets } from "@/lib/privy-solana-wallets";
 
 export default function DepositSolPage() {
   const { token } = useAuth();
   const { connection } = useConnection();
   const wallet = useWallet();
+  const privyWallets = usePrivySolanaWallets();
   const { potId: currentPotId, setPotId } = useCurrentPot();
 
   const sp = useSearchParams();
@@ -32,6 +34,14 @@ export default function DepositSolPage() {
   const [busy, setBusy] = useState(false);
 
   const usdNumber = useMemo(() => Number(usd), [usd]);
+  const privySigner = useMemo(
+    () =>
+      privyWallets.find(
+        (w) => w.type === "solana" && typeof w.signTransaction === "function" && typeof w.sendTransaction === "function"
+      ) ?? null,
+    [privyWallets]
+  );
+  const txWallet = wallet.publicKey ? wallet : privySigner;
 
   // If user came from slider amount page, set the current pot selection.
   useEffect(() => {
@@ -42,7 +52,7 @@ export default function DepositSolPage() {
   async function send() {
     setStatus("");
     if (!token) throw new Error("Sign in first");
-    if (!wallet.publicKey) throw new Error("Connect Phantom first");
+    if (!txWallet) throw new Error("Connect a Solana wallet first");
 
     const potId = potIdFromQuery || currentPotId;
     if (!potId) throw new Error("Select a pot first");
@@ -74,7 +84,7 @@ export default function DepositSolPage() {
         txBase64: prep.txBase64,
         txVersion: prep.txVersion,
         connection,
-        wallet,
+        wallet: txWallet as any,
       });
       await connection.confirmTransaction(sig, "confirmed");
 
@@ -105,7 +115,7 @@ export default function DepositSolPage() {
         <div className="h1">Deposit (Devnet Escrow)</div>
         <p className="p">
           You enter a <b>USD amount</b>. We convert it to SOL using a live SOL/USD quote, then generate a
-          <b> per-pot escrow transaction</b>. You sign it in Phantom.
+          <b> per-pot escrow transaction</b>. You sign it in your wallet.
         </p>
         <p className="p">
           You will see an on-chain transaction in your wallet. Nothing moves until you approve it.
@@ -133,7 +143,7 @@ export default function DepositSolPage() {
             disabled={busy}
             onClick={() => send().catch((e) => setStatus(String(e?.message || e)))}
           >
-            {busy ? "Opening Phantom…" : "Confirm in Phantom"}
+            {busy ? "Opening wallet..." : "Confirm in wallet"}
           </button>
 
           <button

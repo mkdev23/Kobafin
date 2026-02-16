@@ -63,6 +63,22 @@ function requireEnv(name: string): string {
   return value;
 }
 
+function parseCsvAllowlist(raw: string | undefined) {
+  return String(raw || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function normalizeOriginValue(origin: string) {
+  return origin.trim().replace(/\/$/, "").toLowerCase();
+}
+
+function corsOriginOptionFromAllowlist(allowlist: string[]) {
+  const normalized = allowlist.map(normalizeOriginValue);
+  return normalized.length ? normalized : true;
+}
+
 function anchorDiscriminator(ixName: string): Buffer {
   return crypto.createHash("sha256").update(`global:${ixName}`).digest().subarray(0, 8);
 }
@@ -202,14 +218,27 @@ async function submitUpdateTx(params: {
 
 async function main() {
   const app = Fastify({ logger: true });
-  await app.register(cors, { origin: true });
+  const corsAllowlist = parseCsvAllowlist(process.env.SIGNER_CORS_ALLOWED_ORIGINS);
+  await app.register(cors, { origin: corsOriginOptionFromAllowlist(corsAllowlist) });
 
   const connection = new Connection(requireEnv("SOLANA_RPC"), "confirmed");
   const signer = decodeSigner();
   const programId = new PublicKey(requireEnv("KOBA_ESCROW_PROGRAM_ID"));
+  const internalApiKey =
+    process.env.SIGNER_INTERNAL_API_KEY || process.env.INTERNAL_API_KEY || "";
   const allowOffchainPolicyFallback = String(
     process.env.SIGNER_ALLOW_OFFCHAIN_POLICY || "false"
   ).toLowerCase() === "true";
+
+  function ensureInternalAccess(req: any, reply: any) {
+    if (!internalApiKey) return true;
+    const provided = String((req.headers as any)["x-internal-key"] || "");
+    if (provided !== internalApiKey) {
+      reply.code(401).send({ error: "unauthorized_internal" });
+      return false;
+    }
+    return true;
+  }
 
   app.get("/health", async () => ({
     ok: true,
@@ -219,6 +248,7 @@ async function main() {
   }));
 
   app.post("/update_policy", async (req, reply) => {
+    if (!ensureInternalAccess(req, reply)) return;
     const body = payloadSchema.parse(req.body);
     const creRunId = String((req.headers as any)["x-cre-run-id"] || "");
     if (creRunId) {
@@ -309,6 +339,7 @@ async function main() {
   });
 
   app.get("/policy/:podId", async (req: any, reply) => {
+    if (!ensureInternalAccess(req, reply)) return;
     const podId = String(req.params.podId || "");
     const policy = shadowPolicyStore.get(podId);
     if (!policy) return reply.code(404).send({ error: "policy_not_found" });

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import bs58 from "bs58";
-import { useLogin } from "@privy-io/react-auth";
+import { useLogin, usePrivy } from "@privy-io/react-auth";
 import { useSolanaWallets } from "@privy-io/react-auth/solana";
 import { getSiwsChainFromEnv } from "@/lib/solana-network";
 
@@ -25,6 +25,7 @@ export function PrivyAuthButton({
   failureMessage?: string;
   ctaLabel?: string;
 }) {
+  const { ready, authenticated } = usePrivy();
   const { wallets, createWallet } = useSolanaWallets();
   const walletsRef = useRef(wallets);
   const [busy, setBusy] = useState(false);
@@ -43,9 +44,18 @@ export function PrivyAuthButton({
   }
 
   function currentSolanaWallet() {
-    return walletsRef.current.find(
+    const candidates = walletsRef.current.filter(
       (w: any) => w?.type === "solana" && typeof w?.signMessage === "function"
-    ) as any;
+    ) as any[];
+
+    // Prefer Privy embedded wallets first so phone/social login does not
+    // unexpectedly bounce to Phantom connect prompts.
+    const embedded =
+      candidates.find((w) => String(w?.walletClientType || "").toLowerCase() === "privy") ||
+      candidates.find((w) => String(w?.connectorType || "").toLowerCase().includes("embedded"));
+    if (embedded) return embedded;
+
+    return candidates[0] as any;
   }
 
   async function waitForSolanaWallet(timeoutMs = 30000) {
@@ -59,8 +69,20 @@ export function PrivyAuthButton({
   }
 
   function mapPrivyError(message: string) {
+    if (message.includes("already logged in")) {
+      return "privy_already_authenticated";
+    }
+    if (message === "wallet_not_connected") {
+      return "No wallet connected yet. Try again.";
+    }
+    if (message === "wallet_cannot_sign_message") {
+      return "Connected wallet cannot sign messages.";
+    }
     if (message === "privy_sign_message_missing") {
       return "Your Solana wallet is not ready yet. Please wait a moment and try again.";
+    }
+    if (message === "privy_sign_message_invalid") {
+      return "Wallet signature format was invalid. Please try again.";
     }
     if (message === "privy_wallet_missing") {
       return "No Solana wallet found for this account. Please try again.";
@@ -88,24 +110,28 @@ export function PrivyAuthButton({
     throw new Error("privy_sign_message_invalid");
   }
 
+  async function completeSiwsFromPrivyWallet() {
+    let solWallet = currentSolanaWallet();
+    if (!solWallet) {
+      await createWallet();
+      solWallet = await waitForSolanaWallet();
+    }
+    if (!solWallet?.signMessage) throw new Error("privy_sign_message_missing");
+    const walletAddress = solWallet?.address;
+    if (!walletAddress || !isBase58Address(walletAddress)) throw new Error("privy_wallet_missing");
+
+    await loginWithSIWS({
+      walletAddress,
+      signMessage: async (message) => normalizeSignatureBytes(await solWallet.signMessage(message)),
+      chain: getSiwsChainFromEnv(),
+    });
+  }
+
   const { login } = useLogin({
-    onComplete: async (user) => {
+    onComplete: async () => {
       setBusy(true);
       try {
-        let solWallet = currentSolanaWallet();
-        if (!solWallet) {
-          await createWallet();
-          solWallet = await waitForSolanaWallet();
-        }
-        if (!solWallet?.signMessage) throw new Error("privy_sign_message_missing");
-        const walletAddress = solWallet?.address;
-        if (!walletAddress || !isBase58Address(walletAddress)) throw new Error("privy_wallet_missing");
-
-        await loginWithSIWS({
-          walletAddress,
-          signMessage: async (message) => normalizeSignatureBytes(await solWallet.signMessage(message)),
-          chain: getSiwsChainFromEnv(),
-        });
+        await completeSiwsFromPrivyWallet();
         onSuccess();
       } catch (e: any) {
         onError(mapPrivyError(String(e?.message || failureMessage)));
@@ -118,9 +144,36 @@ export function PrivyAuthButton({
     },
   });
 
+  async function handleClick() {
+    if (busy) return;
+    if (ready && authenticated) {
+      setBusy(true);
+      try {
+        await completeSiwsFromPrivyWallet();
+        onSuccess();
+      } catch (e: any) {
+        onError(mapPrivyError(String(e?.message || failureMessage)));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    try {
+      await login();
+    } catch (e: any) {
+      const mapped = mapPrivyError(String(e?.message || e || ""));
+      if (mapped === "privy_already_authenticated") {
+        onSuccess();
+        return;
+      }
+      onError(mapped || failureMessage);
+    }
+  }
+
   return (
-    <button type="button" onClick={() => login()} disabled={busy} className="btn btn--primary btn--full">
+    <button type="button" onClick={handleClick} disabled={busy} className="btn btn--primary btn--full">
       {busy ? "Opening Privy..." : ctaLabel}
     </button>
   );
 }
+

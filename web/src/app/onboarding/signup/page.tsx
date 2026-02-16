@@ -8,6 +8,16 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/auth-context";
 import { PrivyAuthButton } from "@/components/privy-auth-button";
 
+function toAuthErrorMessage(err: unknown, fallback: string) {
+  const msg = String((err as any)?.message || err || "").trim();
+  if (!msg) return fallback;
+  if (msg === "wallet_not_connected") return "No wallet connected yet. Connect your wallet to continue.";
+  if (msg === "wallet_cannot_sign_message") return "Connected wallet cannot sign messages.";
+  if (msg === "bad_signature") return "Signature verification failed. Please try again.";
+  if (msg.includes("rejected")) return "Request was rejected in wallet. Please approve to continue.";
+  return msg;
+}
+
 export default function SignupPage() {
   const router = useRouter();
   const { setVisible } = useWalletModal();
@@ -33,7 +43,7 @@ export default function SignupPage() {
         await loginWithSIWS();
         router.push("/home");
       } catch (e: any) {
-        setErr(e?.message || "Sign-up failed");
+        setErr(toAuthErrorMessage(e, "Sign-up failed"));
       } finally {
         setBusy(false);
       }
@@ -52,7 +62,7 @@ export default function SignupPage() {
       await loginWithSIWS();
       router.push("/home");
     } catch (e: any) {
-      setErr(e?.message || "Sign-up failed");
+      setErr(toAuthErrorMessage(e, "Sign-up failed"));
     } finally {
       setBusy(false);
     }
@@ -68,20 +78,22 @@ export default function SignupPage() {
         {privyEnabled ? (
           <PrivyAuthButton
             onSuccess={() => router.push("/home")}
-            onError={(msg) => setErr(msg)}
+            onError={(msg) => setErr(toAuthErrorMessage(msg, "Privy sign-up failed"))}
             loginWithSIWS={loginWithSIWS}
             failureMessage="Privy sign-up failed"
           />
         ) : null}
 
+        {privyEnabled ? <div className="smalllinks">Or continue with your Solana wallet</div> : null}
+
         <button type="button" onClick={handleSIWS} disabled={busy} className="btn btn--primary btn--full">
           {wallet.connected
             ? busy
               ? "Signing up..."
-              : "Sign up"
+              : "Sign up with wallet"
             : pendingConnectAndSignUp
               ? "Connecting wallet..."
-              : "Connect wallet"}
+              : "Connect & sign with wallet"}
         </button>
 
         {err ? <div className="smalllinks" style={{ color: "#dc2626" }}>{err}</div> : null}

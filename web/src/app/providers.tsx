@@ -24,7 +24,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
       appearance: {
         walletChainType: "solana-only" as const,
       },
-      loginMethods: ["sms", "email", "google", "apple", "wallet"] as const,
+      // Phantom wallet is handled by @solana/wallet-adapter, not Privy
+      loginMethods: ["sms", "email", "google", "apple"] as const,
       embeddedWallets: {
         createOnLogin: "users-without-wallets" as const,
       },

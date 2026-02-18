@@ -13,18 +13,15 @@ export function PhantomMobilePrompt() {
   if (!show) return null;
 
   return (
-    <div className="phantom-mobile-prompt">
-      <div className="smalllinks" style={{ marginBottom: "12px", textAlign: "center" }}>
-        For the best experience on mobile, use Phantom app
-      </div>
+    <>
+      <div className="smalllinks">Or open in the Phantom app</div>
       <button
         type="button"
         onClick={openInPhantom}
-        className="btn btn--secondary btn--full"
-        style={{ marginBottom: "12px" }}
+        className="btn btn--primary btn--full"
       >
-        Open in Phantom App
+        Open in Phantom
       </button>
-    </div>
+    </>
   );
 }

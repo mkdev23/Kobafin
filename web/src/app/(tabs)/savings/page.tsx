@@ -95,7 +95,7 @@ export default function SavingsPage() {
 
   const potList: Pot[] = pots.length
     ? pots
-    : [{ id: "general", name: "General Savings Pot", strategyId: "low", userId: "", createdAt: "", isLocked: false }];
+    : [{ id: "general", name: "General Savings Pot", strategyId: "conservative", userId: "", createdAt: "", isLocked: false }];
 
   const activePot = potList[0];
   const activeApy = apyFromRates(rates, luloModeForStrategy(activePot?.strategyId));

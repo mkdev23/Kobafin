@@ -3,13 +3,34 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, Strategy } from "@/lib/api";
+import { api, Strategy, StrategyId } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
-const RISK_OPTIONS = [
-  { value: "low", label: "Low" },
-  { value: "med", label: "Medium" },
-  { value: "high", label: "High" },
+const STRATEGY_OPTIONS = [
+  {
+    value: "conservative" as StrategyId,
+    label: "Conservative",
+    description: "Capital preservation with stable yield. Mostly USDC in protected lending.",
+    allocation: "70% USDC · 15% BTC · 10% ETH · 5% SOL",
+  },
+  {
+    value: "balanced" as StrategyId,
+    label: "Balanced",
+    description: "Moderate growth with downside protection. Split between stable yield and crypto.",
+    allocation: "40% USDC · 25% BTC · 20% ETH · 15% SOL",
+  },
+  {
+    value: "aggressive" as StrategyId,
+    label: "Aggressive",
+    description: "Higher crypto allocation for growth. Boosted yield with significant market exposure.",
+    allocation: "20% USDC · 30% BTC · 25% ETH · 25% SOL",
+  },
+  {
+    value: "ultra" as StrategyId,
+    label: "Ultra",
+    description: "Maximum crypto exposure. Minimal stablecoin. Fully boosted yield. High volatility expected.",
+    allocation: "10% USDC · 35% BTC · 30% ETH · 25% SOL",
+  },
 ] as const;
 
 export default function CreatePotPage() {
@@ -18,7 +39,7 @@ export default function CreatePotPage() {
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("");
   const [theme, setTheme] = useState("");
-  const [risk, setRisk] = useState<"" | "low" | "med" | "high">("");
+  const [risk, setRisk] = useState<"" | StrategyId>("");
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [lockPot, setLockPot] = useState(true);
   const [goalUsd, setGoalUsd] = useState(24560);
@@ -45,7 +66,7 @@ export default function CreatePotPage() {
       router.push("/onboarding/login");
       return;
     }
-    const strategyId = (risk || strategies[0]?.id || "low") as "low" | "med" | "high";
+    const strategyId = risk || strategies[0]?.id || "conservative";
     const trimmedName = name.trim() || "My Savings Pot";
     const safeGoal = Number.isFinite(goalUsd) && goalUsd > 0 ? goalUsd : 24560;
     try {
@@ -107,17 +128,31 @@ export default function CreatePotPage() {
           <option value="blue">Blue</option>
           <option value="purple">Purple</option>
           <option value="green">Green</option>
+          <option value="orange">Orange</option>
         </select>
 
-        <div className="label">Risk level *</div>
-        <select className="input" value={risk} onChange={(e) => setRisk(e.target.value as any)}>
-          <option value="">Choose your risk level...</option>
-          {RISK_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
+        <div className="label">Strategy *</div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {STRATEGY_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setRisk(opt.value)}
+              style={{
+                padding: "12px 14px",
+                borderRadius: 10,
+                border: risk === opt.value ? "2px solid var(--kb-blue)" : "2px solid rgba(17,24,39,.12)",
+                background: risk === opt.value ? "rgba(10,87,232,.06)" : "transparent",
+                textAlign: "left",
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>{opt.label}</div>
+              <div className="p" style={{ margin: 0, fontSize: 13 }}>{opt.description}</div>
+              <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{opt.allocation}</div>
+            </button>
           ))}
-        </select>
+        </div>
 
         <div className="label">Goal amount *</div>
         <input

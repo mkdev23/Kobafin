@@ -46,19 +46,23 @@ const app = Fastify({ logger: true });
  * We'll use an async main() boot function instead.
  */
 
+type StrategyIdNew = "conservative" | "balanced" | "aggressive" | "ultra";
+
 const STRATEGY_META = {
-  low: { strategyKey: "LULO_PROTECTED", riskTier: "LOW", luloMode: "PROTECTED" },
-  med: { strategyKey: "LULO_PROTECTED", riskTier: "MED", luloMode: "PROTECTED" },
-  high: { strategyKey: "LULO_BOOSTED", riskTier: "HIGH", luloMode: "BOOSTED" },
+  conservative: { strategyKey: "LULO_PROTECTED", riskTier: "CONSERVATIVE", luloMode: "PROTECTED" },
+  balanced:     { strategyKey: "LULO_PROTECTED", riskTier: "BALANCED",     luloMode: "PROTECTED" },
+  aggressive:   { strategyKey: "LULO_BOOSTED",   riskTier: "AGGRESSIVE",   luloMode: "BOOSTED" },
+  ultra:        { strategyKey: "LULO_BOOSTED",   riskTier: "ULTRA",        luloMode: "BOOSTED" },
 } as const;
 
 const STRATEGIES = [
   {
-    id: "low",
-    name: "Low Risk",
-    strategyKey: STRATEGY_META.low.strategyKey,
-    riskTier: STRATEGY_META.low.riskTier,
-    luloMode: STRATEGY_META.low.luloMode,
+    id: "conservative",
+    name: "Conservative",
+    description: "Capital preservation with stable yield. Mostly USDC in protected lending.",
+    strategyKey: STRATEGY_META.conservative.strategyKey,
+    riskTier: STRATEGY_META.conservative.riskTier,
+    luloMode: STRATEGY_META.conservative.luloMode,
     allocations: { USDC: 0.7, BTC: 0.15, ETH: 0.1, SOL: 0.05 },
     execution: {
       USDC: { mode: "LULO_PROTECTED", note: "USDC → Lulo Protected (V1)" },
@@ -68,11 +72,12 @@ const STRATEGIES = [
     },
   },
   {
-    id: "med",
-    name: "Medium Risk",
-    strategyKey: STRATEGY_META.med.strategyKey,
-    riskTier: STRATEGY_META.med.riskTier,
-    luloMode: STRATEGY_META.med.luloMode,
+    id: "balanced",
+    name: "Balanced",
+    description: "Moderate growth with downside protection. Split between stable yield and crypto exposure.",
+    strategyKey: STRATEGY_META.balanced.strategyKey,
+    riskTier: STRATEGY_META.balanced.riskTier,
+    luloMode: STRATEGY_META.balanced.luloMode,
     allocations: { USDC: 0.4, BTC: 0.25, ETH: 0.2, SOL: 0.15 },
     execution: {
       USDC: {
@@ -87,11 +92,12 @@ const STRATEGIES = [
     },
   },
   {
-    id: "high",
-    name: "High Risk",
-    strategyKey: STRATEGY_META.high.strategyKey,
-    riskTier: STRATEGY_META.high.riskTier,
-    luloMode: STRATEGY_META.high.luloMode,
+    id: "aggressive",
+    name: "Aggressive",
+    description: "Higher crypto allocation for growth. Boosted yield on USDC with significant market exposure.",
+    strategyKey: STRATEGY_META.aggressive.strategyKey,
+    riskTier: STRATEGY_META.aggressive.riskTier,
+    luloMode: STRATEGY_META.aggressive.luloMode,
     allocations: { USDC: 0.2, BTC: 0.3, ETH: 0.25, SOL: 0.25 },
     execution: {
       USDC: {
@@ -105,29 +111,68 @@ const STRATEGIES = [
       SOL: { mode: "HOLD", note: "SOL held (V1)" },
     },
   },
+  {
+    id: "ultra",
+    name: "Ultra",
+    description: "Maximum crypto exposure. Minimal stablecoin. Fully boosted yield. High volatility expected.",
+    strategyKey: STRATEGY_META.ultra.strategyKey,
+    riskTier: STRATEGY_META.ultra.riskTier,
+    luloMode: STRATEGY_META.ultra.luloMode,
+    allocations: { USDC: 0.1, BTC: 0.35, ETH: 0.3, SOL: 0.25 },
+    execution: {
+      USDC: {
+        mode: "LULO_BOOSTED",
+        note: "USDC → Lulo Boosted (V1)",
+      },
+      BTC: { mode: "HOLD", note: "BTC held (V1)" },
+      ETH: { mode: "HOLD", note: "ETH held (V1)" },
+      SOL: { mode: "HOLD", note: "SOL held (V1)" },
+    },
+  },
 ] as const;
 
-function resolveStrategyMeta(id: "low" | "med" | "high") {
-  return STRATEGY_META[id] ?? STRATEGY_META.low;
+// Map legacy IDs (low/med/high) to new IDs for backwards compatibility
+const LEGACY_STRATEGY_MAP: Record<string, StrategyIdNew> = {
+  low: "conservative",
+  med: "balanced",
+  high: "aggressive",
+};
+
+function normalizeStrategyId(id: string): StrategyIdNew {
+  return LEGACY_STRATEGY_MAP[id] || (id as StrategyIdNew) || "conservative";
 }
 
-type GovernancePodTier = "LOW" | "MEDIUM" | "HIGH";
+function resolveStrategyMeta(id: string) {
+  const normalized = normalizeStrategyId(id);
+  return STRATEGY_META[normalized] ?? STRATEGY_META.conservative;
+}
+
+type GovernancePodTier = "CONSERVATIVE" | "BALANCED" | "AGGRESSIVE" | "ULTRA";
 
 function normalizePodTierFromPot(pot: { strategyId?: string; riskTier?: string | null }): GovernancePodTier {
   const risk = String(pot.riskTier || "").trim().toUpperCase();
-  if (risk === "LOW") return "LOW";
-  if (risk === "MED" || risk === "MEDIUM") return "MEDIUM";
-  if (risk === "HIGH") return "HIGH";
+  // Support new tier names
+  if (risk === "CONSERVATIVE") return "CONSERVATIVE";
+  if (risk === "BALANCED") return "BALANCED";
+  if (risk === "AGGRESSIVE") return "AGGRESSIVE";
+  if (risk === "ULTRA") return "ULTRA";
+  // Legacy tier names
+  if (risk === "LOW") return "CONSERVATIVE";
+  if (risk === "MED" || risk === "MEDIUM") return "BALANCED";
+  if (risk === "HIGH") return "AGGRESSIVE";
 
-  const strategyId = String(pot.strategyId || "").trim().toLowerCase();
-  if (strategyId === "low") return "LOW";
-  if (strategyId === "med" || strategyId === "medium") return "MEDIUM";
-  return "HIGH";
+  const strategyId = normalizeStrategyId(String(pot.strategyId || "").trim().toLowerCase());
+  if (strategyId === "conservative") return "CONSERVATIVE";
+  if (strategyId === "balanced") return "BALANCED";
+  if (strategyId === "aggressive") return "AGGRESSIVE";
+  if (strategyId === "ultra") return "ULTRA";
+  return "CONSERVATIVE";
 }
 
 function governanceWeightsPctFromStrategy(strategyId: string) {
+  const normalized = normalizeStrategyId(strategyId);
   const strategy =
-    STRATEGIES.find((s) => s.id === (strategyId as "low" | "med" | "high")) || STRATEGIES[0];
+    STRATEGIES.find((s) => s.id === normalized) || STRATEGIES[0];
   return {
     usdc: Math.round((strategy.allocations.USDC || 0) * 10000) / 100,
     btc: Math.round((strategy.allocations.BTC || 0) * 10000) / 100,
@@ -137,7 +182,7 @@ function governanceWeightsPctFromStrategy(strategyId: string) {
 }
 
 function governancePolicyForTier(tier: GovernancePodTier) {
-  if (tier === "LOW") {
+  if (tier === "CONSERVATIVE") {
     return {
       min_usdc_in_lulo_pct: 70,
       max_btc_pct: 20,
@@ -145,7 +190,7 @@ function governancePolicyForTier(tier: GovernancePodTier) {
       max_sol_pct: 15,
     };
   }
-  if (tier === "MEDIUM") {
+  if (tier === "BALANCED") {
     return {
       min_usdc_in_lulo_pct: 50,
       max_btc_pct: 30,
@@ -153,11 +198,20 @@ function governancePolicyForTier(tier: GovernancePodTier) {
       max_sol_pct: 25,
     };
   }
+  if (tier === "AGGRESSIVE") {
+    return {
+      min_usdc_in_lulo_pct: 30,
+      max_btc_pct: 40,
+      max_eth_pct: 30,
+      max_sol_pct: 40,
+    };
+  }
+  // ULTRA
   return {
-    min_usdc_in_lulo_pct: 30,
-    max_btc_pct: 40,
-    max_eth_pct: 30,
-    max_sol_pct: 40,
+    min_usdc_in_lulo_pct: 10,
+    max_btc_pct: 45,
+    max_eth_pct: 35,
+    max_sol_pct: 35,
   };
 }
 
@@ -478,7 +532,7 @@ async function registerRoutes() {
       return {
         pod_id: pot.id,
         pod_tier: podTier,
-        current_weights_pct: governanceWeightsPctFromStrategy(pot.strategyId || "low"),
+        current_weights_pct: governanceWeightsPctFromStrategy(pot.strategyId || "conservative"),
         current_risk_state: "NORMAL" as const,
         policy: governancePolicyForTier(podTier),
         // DEX spot placeholders in USDC per asset (USDC ~= USD).
@@ -705,19 +759,20 @@ await prisma.user.upsert({
     const body = z
       .object({
         name: z.string().min(1),
-        strategyId: z.enum(["low", "med", "high"]),
+        strategyId: z.enum(["conservative", "balanced", "aggressive", "ultra", "low", "med", "high"]),
         goalUsd: z.number().positive().optional(),
         isLocked: z.boolean().optional(),
       })
       .parse(req.body);
 
-    const strategyMeta = resolveStrategyMeta(body.strategyId);
+    const resolvedStrategyId = normalizeStrategyId(body.strategyId);
+    const strategyMeta = resolveStrategyMeta(resolvedStrategyId);
 
     const pot = await prisma.pot.create({
       data: {
         userId: req.user.sub,
         name: body.name,
-        strategyId: body.strategyId,
+        strategyId: resolvedStrategyId,
         strategyKey: strategyMeta.strategyKey,
         riskTier: strategyMeta.riskTier,
         goalUsd: body.goalUsd ?? null,
@@ -754,7 +809,7 @@ await prisma.user.upsert({
       orderBy: { createdAt: "desc" },
     });
     const enriched = pots.map((p) => {
-      const meta = resolveStrategyMeta((p.strategyId as "low" | "med" | "high") || "low");
+      const meta = resolveStrategyMeta(p.strategyId || "conservative");
       return {
         ...p,
         strategyKey: p.strategyKey ?? meta.strategyKey,
@@ -829,7 +884,7 @@ await prisma.user.upsert({
     const balanceUsd = balanceSol * solUsd;
 
     const strategyMeta = resolveStrategyMeta(
-      (pot.strategyId as "low" | "med" | "high") || "low"
+      pot.strategyId || "conservative"
     );
     const potOut = {
       ...pot,
@@ -856,7 +911,7 @@ await prisma.user.upsert({
     let position = await prisma.luloPosition.findUnique({ where: { potId } });
     if (!position) {
       const strategyMeta = resolveStrategyMeta(
-        (pot.strategyId as "low" | "med" | "high") || "low"
+        pot.strategyId || "conservative"
       );
       const owner = new PublicKey(req.user.walletAddress);
       const { pda: vaultPda } = deriveVaultPdaFromPotId(owner, pot.id, escrowProgramId);
@@ -1308,7 +1363,7 @@ await prisma.user.upsert({
       );
 
       const luloAmount = usdcBase / 1_000_000;
-      const meta = resolveStrategyMeta((pot.strategyId as "low" | "med" | "high") || "low");
+      const meta = resolveStrategyMeta(pot.strategyId || "conservative");
       const protectedAmount = meta.luloMode === "PROTECTED" ? luloAmount : 0;
       const regularAmount = meta.luloMode === "BOOSTED" ? luloAmount : 0;
 
@@ -1556,7 +1611,7 @@ await prisma.user.upsert({
 
     const owner = new PublicKey(req.user.walletAddress);
     const { pda: vaultPda, potHash } = deriveVaultPdaFromPotId(owner, pot.id, escrowProgramId);
-    const meta = resolveStrategyMeta((pot.strategyId as "low" | "med" | "high") || "low");
+    const meta = resolveStrategyMeta(pot.strategyId || "conservative");
     const vaultInfo = await connection.getAccountInfo(vaultPda, "confirmed");
     if (!vaultInfo) return reply.code(400).send({ error: "vault_not_initialized" });
     if (vaultInfo.data && vaultInfo.data.length < VAULT_SPACE) {
@@ -1731,7 +1786,7 @@ await prisma.user.upsert({
 
     const owner = new PublicKey(req.user.walletAddress);
     const { pda: vaultPda, potHash } = deriveVaultPdaFromPotId(owner, pot.id, escrowProgramId);
-    const meta = resolveStrategyMeta((pot.strategyId as "low" | "med" | "high") || "low");
+    const meta = resolveStrategyMeta(pot.strategyId || "conservative");
     const vaultInfo = await connection.getAccountInfo(vaultPda, "confirmed");
     if (!vaultInfo) return reply.code(400).send({ error: "vault_not_initialized" });
     if (vaultInfo.data && vaultInfo.data.length < VAULT_SPACE) {
@@ -2874,7 +2929,7 @@ await prisma.user.upsert({
             id: adminPotId,
             userId: adminUser.id,
             name: "Admin Vault",
-            strategyId: "low",
+            strategyId: "conservative",
           },
         });
 

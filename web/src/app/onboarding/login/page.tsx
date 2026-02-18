@@ -29,17 +29,6 @@ export default function LoginPage() {
   const [pendingConnectAndSignIn, setPendingConnectAndSignIn] = useState(false);
   const privyEnabled = !!process.env.NEXT_PUBLIC_PRIVY_APP_ID;
 
-  // Debug: Log wallet state
-  useEffect(() => {
-    console.log("[Login] Wallet state:", {
-      connected: wallet.connected,
-      connecting: wallet.connecting,
-      publicKey: wallet.publicKey?.toBase58(),
-      walletName: wallet.wallet?.adapter?.name,
-      allWallets: wallet.wallets?.map(w => w.adapter.name),
-    });
-  }, [wallet.connected, wallet.connecting, wallet.publicKey, wallet.wallet, wallet.wallets]);
-
   useEffect(() => {
     if (!isReady) return;
     if (token) router.replace("/home");
@@ -64,11 +53,8 @@ export default function LoginPage() {
 
   async function handleSIWS() {
     setErr(null);
-    console.log("[Login] handleSIWS called, wallet.connected:", wallet.connected);
-    console.log("[Login] Phantom in window?", typeof (window as any).solana !== "undefined");
     if (!wallet.connected) {
       setPendingConnectAndSignIn(true);
-      console.log("[Login] Opening wallet modal...");
       setVisible(true);
       return;
     }

@@ -1,7 +1,7 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://localhost:3001";
 
-export type StrategyId = "low" | "med" | "high";
+export type StrategyId = "conservative" | "balanced" | "aggressive" | "ultra";
 
 export type Strategy = {
   id: StrategyId;

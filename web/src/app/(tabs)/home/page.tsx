@@ -117,8 +117,8 @@ export default function HomePage() {
   const potList: Pot[] = pots.length
     ? pots
     : [
-        { id: "general", name: "General Savings Pot", strategyId: "low", userId: "", createdAt: "", isLocked: false },
-        { id: "breakpoint", name: "Breakpoint Singapore 2024", strategyId: "low", userId: "", createdAt: "", isLocked: false },
+        { id: "general", name: "General Savings Pot", strategyId: "conservative", userId: "", createdAt: "", isLocked: false },
+        { id: "breakpoint", name: "Breakpoint Singapore 2024", strategyId: "conservative", userId: "", createdAt: "", isLocked: false },
       ];
 
   return (
